@@ -28,6 +28,7 @@ final class Plugin {
 		if (self::$started) { return; } self::$started = true;
         do_action('acf_vf/app/register_extensions');
         Extensions::finish();
+        add_action('admin_notices', [Extensions::class, 'notice']);
 		foreach ( array( 'NativeGuard', 'Rules', 'NativeFields', 'BusinessFields', 'Relationships', 'Audit', 'Jobs', 'Index', 'Localization', 'NativeTables', 'Lists', 'Rest', 'GraphQL', 'Admin', 'Schema' ) as $name ) {
 			$class = __NAMESPACE__ . '\\' . $name;
 			if ( class_exists( $class ) && is_callable( array( $class, 'boot' ) ) ) { $class::boot(); }
