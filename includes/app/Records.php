@@ -11,9 +11,9 @@ final class Records {
     private static $derived_validation = [];
 
     /** Only compatible server providers register calculators, during extension bootstrap. */
-    public static function register_derived(string $key, string $feature, array $dependents, callable $calculate): void {
+    public static function register_derived(string $key, string $feature, array $dependents, callable $calculate, ?callable $sources = null): void {
         if (!doing_action('acf_vf/app/register_extensions') || isset(self::$derived_providers[$key])) { throw new \LogicException('Derived calculator registration is closed or duplicated.'); }
-        self::$derived_providers[$key] = compact('feature', 'dependents', 'calculate');
+        self::$derived_providers[$key] = compact('feature', 'dependents', 'calculate', 'sources');
     }
 
     /** This identity exists only during internal derived validation and persistence events. */
@@ -66,6 +66,7 @@ final class Records {
             $before = self::raw($id);
             $calculated = call_user_func($provider['calculate'], $id, $name, $before['fields']);
             if (is_wp_error($calculated) || !is_array($calculated) || !array_key_exists($name, $calculated)) { Storage::rollback(); return self::error('derived_calculation', 'Derived field could not be calculated.', 422); }
+            $sources = $provider['sources'] ? [$name=>call_user_func($provider['sources'], $id, $name)] : [];
             $definitions = Schema::fields($object);
             $changes = [];
             foreach ($calculated as $field_name => $value) {
@@ -78,7 +79,10 @@ final class Records {
                 if (($value === null && ($existing === null || $existing === '')) || (is_numeric($value) && is_numeric($existing) && (float)$value === (float)$existing) || $existing === $value) { continue; }
                 $changes[$field_name] = $value;
             }
-            if (!$changes) { return Storage::commit() ? true : self::error('commit_failed', 'Derived transaction could not be committed.', 500); }
+            if (!$changes) {
+                self::remember_computed($id, $object, $before['fields'], array_keys($calculated), $sources);
+                return Storage::commit() ? true : self::error('commit_failed', 'Derived transaction could not be committed.', 500);
+            }
             $values = array_replace($before['fields'], $changes);
             // Do not run arbitrary preparation/automation callbacks with derived write authority.
             $identity = new \stdClass();
@@ -102,6 +106,7 @@ final class Records {
             $written = self::native_write($id, $object, static function () use ($id, $version) { return update_post_meta($id, '_vf_app_version', $version); });
             if ($written === false || is_wp_error(Unique::finish($object, $claims, $id))) { throw new \RuntimeException('Derived persistence failed.'); }
             $record = self::raw($id);
+            self::remember_computed($id, $object, $record['fields'], array_keys($calculated), $sources);
             self::$derived_validation[] = ['object'=>$object, 'id'=>$id, 'identity'=>$identity, 'before'=>$before['fields'], 'values'=>$values];
             try { do_action('acf_vf/app/record_persisted', $record, $before, $context + ['_derived_identity'=>$identity]); }
             finally { array_pop(self::$derived_validation); }
@@ -129,6 +134,31 @@ final class Records {
         self::$native_writes[] = ['id'=>$id,'object'=>$object,'create'=>$id === 0];
         try { return $write(); }
         finally { array_pop(self::$native_writes); self::$writing--; }
+    }
+
+    private static function remember_computed(int $id, string $object, array $values, array $names, array $sources = []): void {
+        $stored = get_post_meta($id, ComputedAccess::META, true);
+        $stored = is_array($stored) ? $stored : [];
+        $previous = $stored;
+        foreach ($names as $name) {
+            $field = Schema::fields($object)[$name] ?? [];
+            if (empty($field['formula']) && empty($field['rollup'])) { continue; }
+            // A rollup provider must identify its actual contributing rows; without them, older
+            // evidence is withdrawn so neither the rollup nor dependent formulas can be read.
+            if (!empty($field['rollup']) && !array_key_exists($name, $sources)) { unset($stored[$name]); continue; }
+            $stored[$name] = ComputedAccess::evidence($object, $name, $values[$name] ?? null, $sources[$name] ?? []);
+        }
+        // Retained contributor IDs are bounded per record, not just per rollup; overflowing
+        // evidence is kept without sources so the value stays hidden until a smaller refresh.
+        $total = 0;
+        foreach ($stored as $name => $evidence) {
+            $count = is_array($evidence['sources'] ?? null) ? count($evidence['sources']) : 0;
+            if ($total + $count > ComputedAccess::max_sources()) { $stored[$name]['sources'] = null; continue; }
+            $total += $count;
+        }
+        if ($stored === $previous) { return; }
+        $saved = self::native_write($id, $object, static function () use ($id, $stored) { return update_post_meta($id, ComputedAccess::META, $stored); });
+        if ($saved === false) { throw new \RuntimeException('Computed provenance could not be saved.'); }
     }
     /**
      * Read as the current WordPress user; unreadable fields are omitted.
@@ -234,6 +264,14 @@ final class Records {
                 Storage::rollback();
                 return $preview;
             }
+            if ($before && $values === $before['fields'] && ($payload['title'] ?? $before['title']) === $before['title'] && $status === $before['status']) {
+                if (Extensions::has('calculations.formula')) {
+                    $names = array_keys(array_filter(Schema::fields($object), static function ($field) { return !empty($field['formula']) && empty($field['rollup']); }));
+                    self::remember_computed($id, $object, $before['fields'], $names);
+                }
+                $before['fields'] = Permissions::readable_fields($object, $id, $before['fields']);
+                return Storage::commit() ? $before : self::error('commit_failed', 'Record transaction could not be committed.', 500);
+            }
             $claims = Unique::claim($object, $values, $id);
             if (is_wp_error($claims)) { Storage::rollback(); return $claims; }
             $post = ['post_type' => $object, 'post_status' => $status, 'post_title' => $payload['title'] ?? ($before['title'] ?? '')];
@@ -260,6 +298,10 @@ final class Records {
             $unique_saved = Unique::finish($object, $claims, $id);
             if (is_wp_error($unique_saved)) { Storage::rollback(); return $unique_saved; }
             $record = self::raw($id);
+            if (Extensions::has('calculations.formula')) {
+                $formulas = array_keys(array_filter(Schema::fields($object), static function ($field) { return !empty($field['formula']) && empty($field['rollup']); }));
+                self::remember_computed($id, $object, $record['fields'], $formulas);
+            }
             // Durable audit/outbox work belongs here; external side effects belong in record_saved after commit.
             do_action('acf_vf/app/record_persisted', $record, $before, $context);
             Storage::after_commit(static function () use ($record, $before, $context) { do_action('acf_vf/app/record_saved', $record, $before, $context); });

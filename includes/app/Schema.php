@@ -345,6 +345,8 @@ final class Schema {
     public static function compatible(array $before, array $after) {
         foreach ($before['fields'] ?? [] as $name => $field) {
             if (!isset($after['fields'][$name]) || self::storage_shape($field) !== self::storage_shape($after['fields'][$name])) { return self::error('schema_migration_required', 'Removing fields or changing their storage shape requires a reviewed data migration.', 409); }
+            $next = $after['fields'][$name];
+            if ((!empty($field['formula']) || !empty($field['rollup'])) && empty($next['formula']) && empty($next['rollup'])) { return self::error('schema_migration_required', 'Removing a computation requires a reviewed data migration to replace its retained values.', 409); }
         }
         return true;
     }

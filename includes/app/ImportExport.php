@@ -20,7 +20,7 @@ final class ImportExport {
         $query = array_key_exists('query', $input) ? $input['query'] : [];
         if (!is_array($query) || ($error = Rest::query_args($query))) { return $error ?: Rest::error('query_input', 'Query must be an object.'); }
         if (isset($query['page']) || isset($query['per_page'])) { return Rest::error('export_query', 'Export query must omit pagination.'); }
-        $fields = array_key_exists('fields', $input) ? $input['fields'] : array_keys(Permissions::readable_fields($object, 0, Schema::fields($object)));
+        $fields = array_key_exists('fields', $input) ? $input['fields'] : array_keys(array_filter(Schema::fields($object), static function ($name) use ($object) { return Permissions::can('read', $object, 0, $name); }, ARRAY_FILTER_USE_KEY));
         if (!Rest::is_list($fields) || count($fields) > 200) { return Rest::error('export_fields', 'Fields must be a bounded list.'); }
         foreach ($fields as $field) {
             if (!is_string($field) || !Permissions::can('read', $object, 0, $field)) { return Rest::error('export_fields', 'Requested export field is unavailable.', 403); }
