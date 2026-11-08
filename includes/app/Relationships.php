@@ -41,6 +41,7 @@ final class Relationships {
                     if (!is_wp_error($previous_ids)) { $lock_ids = array_values(array_unique(array_merge($lock_ids, $previous_ids))); }
                 }
                 sort($lock_ids, SORT_NUMERIC);
+                if (!WorkBudget::consume(count($lock_ids))) { $errors[] = ['field' => $name, 'code' => 'request_work_capacity', 'message' => 'This operation exceeds the request processing limit.']; continue; }
                 foreach ($lock_ids as $target) {
                     if (Storage::in_transaction()) {
                         $lock = Storage::lock('record:' . $target);
@@ -59,7 +60,7 @@ final class Relationships {
     }
 
     /** Internal reference discovery includes unreadable rows so restrict cannot be bypassed. */
-    public static function incoming(int $target, string $target_object): array {
+    public static function incoming(int $target, string $target_object) {
         $references = [];
         foreach (Schema::objects() as $object => $definition) {
             foreach (Schema::fields($object) as $name => $field) {
@@ -67,8 +68,11 @@ final class Relationships {
                 if (($rel['object'] ?? '') !== $target_object) { continue; }
                 $page = 1;
                 do {
+                    // Each page retrieval is charged, so empty scans across many fields still count.
+                    if (!WorkBudget::consume()) { return WorkBudget::error(); }
                     $ids = get_posts(['post_type' => $object, 'post_status' => 'any', 'fields' => 'ids', 'posts_per_page' => 100, 'paged' => $page++, 'orderby' => 'ID', 'order' => 'ASC', 'suppress_filters' => true]);
                     foreach ($ids as $id) {
+                        if (!WorkBudget::consume()) { return WorkBudget::error(); }
                         $value = get_post_meta($id, $name, true);
                         $targets = self::ids($value);
                         if (!is_wp_error($targets) && in_array($target, $targets, true)) {
@@ -94,12 +98,15 @@ final class Relationships {
             if (Storage::in_transaction()) { $lock = Storage::lock('record:' . $target); if (is_wp_error($lock)) { return $lock; } }
         }
         $changes = [];
-        foreach (self::incoming((int) $record['id'], $record['object']) as $ref) {
+        $incoming = self::incoming((int) $record['id'], $record['object']);
+        if (is_wp_error($incoming)) { return $incoming; }
+        foreach ($incoming as $ref) {
             if ($ref['id'] === (int) $record['id']) { continue; }
             if (($ref['config']['on_delete'] ?? 'restrict') !== 'nullify') { return new \WP_Error('relationship_restrict', 'This record is referenced and cannot be deleted.'); }
             if (!Permissions::can('update', $ref['object'], $ref['id'], $ref['field'])) { return new \WP_Error('relationship_permission', 'A dependent record cannot be updated.'); }
             $remaining = array_values(array_diff($ref['targets'], [(int) $record['id']]));
             $changes[$ref['id']][$ref['field']] = is_array($ref['value']) ? $remaining : ($remaining[0] ?? null);
+            if (count($changes)>100) { return new \WP_Error('relationship_cascade_capacity', 'At most 100 dependent records can be unlinked in one deletion. Unlink them in batches first.', ['status'=>413]); }
         }
         foreach ($changes as $id => $fields) {
             $current = Records::read((int) $id);

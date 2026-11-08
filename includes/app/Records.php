@@ -1,6 +1,7 @@
 <?php
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
+require_once __DIR__ . '/WorkBudget.php';
 
 /** The only application write path. Every proposed record is validated before mutation. */
 final class Records {
@@ -135,14 +136,17 @@ final class Records {
      * @return array|\WP_Error Record with id, object, title, status, version and fields.
      */
     public static function read(int $id) {
+        if (!WorkBudget::consume()) { return WorkBudget::error(); }
         self::flush_cache($id);
         $post = get_post($id);
         if (!$post || !Schema::object($post->post_type)) { return self::error('record_unavailable', 'Record is unavailable.', 404); }
         $current = Schema::assert_current($post->post_type);
         if (is_wp_error($current)) { return $current; }
         if (!Permissions::can('read', $post->post_type, $id)) { return self::error('record_unavailable', 'Record is unavailable.', 404); }
+        if (!WorkBudget::consume(count(Schema::fields($post->post_type)))) { return WorkBudget::error(); }
         $record = self::raw($id);
         $record['fields'] = Permissions::readable_fields($record['object'], $id, $record['fields']);
+        if (!WorkBudget::consume(0)) { return WorkBudget::error(); }
         $current = Schema::assert_current($record['object']);
         return is_wp_error($current) ? $current : $record;
     }
@@ -182,6 +186,7 @@ final class Records {
      * @example Records::save('invoice', ['fields' => ['amount' => 125]]);
      */
     public static function save(string $object, array $payload, int $id = 0, array $context = []) {
+        if (!WorkBudget::consume(5)) { return WorkBudget::error(); }
         $context = self::context($context);
         if ($context['depth'] > 8) { return self::error('recursion', 'Application write depth exceeded.', 409); }
         if (!Schema::object($object)) { return self::error('object_unavailable', 'Object is unavailable.', 404); }
@@ -264,6 +269,8 @@ final class Records {
             return $record;
         } catch (\Throwable $exception) {
             if (!$committed) { Storage::rollback(); }
+            // A service that ran out of request allowance reports it, so callers can narrow and retry.
+            if (WorkBudget::exhausted()) { return WorkBudget::error(); }
             // Never include field values, SQL, stack traces or third-party exception text.
             return self::error('record_exception', 'The record operation failed.', 500);
         }
@@ -310,6 +317,7 @@ final class Records {
 
     private static function validate_proposed(string $object, array $values, int $id, array $context, string $status, bool $derived = false) {
         $definitions = Schema::fields($object);
+        if (!WorkBudget::consume(count($definitions))) { return WorkBudget::error(); }
         if (!$derived && !Permissions::can_propose($id ? 'update' : 'create', $object, $values, $id)) { return self::error('scope_forbidden', 'Proposed values are outside the permitted record scope.', 403); }
         if (array_diff(array_keys($values), array_keys($definitions))) { return self::error('unknown_field', 'Unknown prepared field.'); }
         if (!function_exists('acf_validate_value')) { return self::error('acf_unavailable', 'ACF validation is unavailable.', 503); }

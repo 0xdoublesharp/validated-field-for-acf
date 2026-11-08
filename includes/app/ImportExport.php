@@ -26,18 +26,15 @@ final class ImportExport {
             if (!is_string($field) || !Permissions::can('read', $object, 0, $field)) { return Rest::error('export_fields', 'Requested export field is unavailable.', 403); }
         }
         $items = []; $bytes = 0;
-        for ($page = 1; $page <= 10; $page++) {
-            $result = Query::run($object, $query + ['page' => $page, 'per_page' => 100]);
-            if (is_wp_error($result)) { return $result; }
-            if ($result['total'] > 1000) { return Rest::error('export_limit', 'Narrow the query to at most 1000 records.'); }
-            foreach ($result['items'] as $item) {
-                if (!Permissions::can('export', $object, $item['id'])) { continue; }
-                $item['fields'] = array_intersect_key(Permissions::readable_fields($object, $item['id'], $item['fields']), array_flip($fields));
-                $bytes += strlen(wp_json_encode($item));
-                if ($bytes > 5242880) { return Rest::error('export_limit', 'Narrow the query to an export of at most 5 MiB.'); }
-                $items[] = $item;
-            }
-            if ($page >= $result['total_pages']) { break; }
+        $result = Query::collect($object, $query, 1000);
+        if (is_wp_error($result) && $result->get_error_code() === 'query_collection_capacity') { return Rest::error('export_limit', 'Narrow the query to at most 1000 records.'); }
+        if (is_wp_error($result)) { return $result; }
+        foreach ($result['items'] as $item) {
+            if (!Permissions::can('export', $object, $item['id'])) { continue; }
+            $item['fields'] = array_intersect_key(Permissions::readable_fields($object, $item['id'], $item['fields']), array_flip($fields));
+            $bytes += strlen(wp_json_encode($item));
+            if ($bytes > 5242880) { return Rest::error('export_limit', 'Narrow the query to an export of at most 5 MiB.'); }
+            $items[] = $item;
         }
         if ($format === 'json') { $content = wp_json_encode(['schema_version' => 1, 'object' => $object, 'records' => $items], JSON_PRETTY_PRINT); }
         else {

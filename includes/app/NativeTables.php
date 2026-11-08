@@ -193,7 +193,12 @@ final class NativeTables {
         }
         $rows=$clauses?$wpdb->get_results($wpdb->prepare("SELECT meta_key,SHA2(meta_value,256) AS digest FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key NOT IN (%s,%s) AND meta_key NOT LIKE %s AND (".implode(' OR ',$clauses).') ORDER BY meta_key,meta_id LIMIT 10001',$args),ARRAY_A):[];
         if ($wpdb->last_error || count($rows)>10000) { throw new \RuntimeException('Native observation exceeds its storage capacity.'); }
-        return hash('sha256',(string)wp_json_encode([self::core($post),$rows]));
+        $terms = $wpdb->get_col($wpdb->prepare("SELECT term_taxonomy_id FROM {$wpdb->term_relationships} WHERE object_id=%d ORDER BY term_taxonomy_id LIMIT 10001", $id));
+        if ($wpdb->last_error || count($terms)>10000) { throw new \RuntimeException('Native taxonomy observation exceeds its storage capacity.'); }
+        // Charge the observed rows to the request allowance. Exhaustion latches, so an enclosing
+        // application read fails at its next charge while core WordPress writes are not interrupted.
+        WorkBudget::consume(2+intdiv(count($rows)+count($terms),25));
+        return hash('sha256',(string)wp_json_encode([self::core($post),$rows,$terms]));
     }
     private static function checked($result): void { if ($result===false) { throw new \RuntimeException('Native observation could not be persisted.'); } }
     private static function commit(bool &$active): void {

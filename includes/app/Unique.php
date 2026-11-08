@@ -1,6 +1,7 @@
 <?php
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
+require_once __DIR__ . '/WorkBudget.php';
 
 /** Database primary keys arbitrate concurrent claims. Values never enter error messages. */
 final class Unique {

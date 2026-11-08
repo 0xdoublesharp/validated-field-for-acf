@@ -2,6 +2,17 @@
 
 /** Extra validation for native ACF fields wrapped by Validated Field. */
 class ACF_VF_Validation {
+	private static function bounded_value( $value ) {
+		$pending = array( array( $value, 0 ) ); $nodes = 0; $bytes = 0;
+		while ( $pending ) {
+			list( $item, $depth ) = array_pop( $pending );
+			if ( ++$nodes > 1000 || $depth > 16 ) { return false; }
+			if ( is_array( $item ) ) { foreach ( $item as $child ) { $pending[] = array( $child, $depth + 1 ); } }
+			elseif ( is_scalar( $item ) ) { $bytes += strlen( (string)$item ); if ( $bytes > 65536 ) { return false; } }
+			elseif ( $item !== null ) { return false; }
+		}
+		return true;
+	}
 
 	private static $submitted_rows = array();
 
@@ -298,6 +309,7 @@ class ACF_VF_Validation {
 		if ( true !== $valid ) {
 			return $valid;
 		}
+		if ( !self::bounded_value( $value ) ) { return __( 'The value exceeds the validation processing limit.', 'acf_vf' ); }
 		$post_id = null === $post_id ? self::context() : ( $post_id === 0 ? 0 : acf_get_valid_post_id( $post_id ) );
 		$entries = self::submitted_entries( null, $post_id );
 		$entry = isset( $entries[$input] ) ? $entries[$input] : null;
@@ -336,7 +348,13 @@ class ACF_VF_Validation {
 			}
 			if ( $function === 'regex' ) {
 				$subject = is_array( $value ) ? implode( ',', self::atoms( $value ) ) : (string)$value;
-				if ( 1 !== @preg_match( self::regex_pattern( $pattern ), $subject ) ) {
+				if ( strlen( $pattern ) > 4096 || strlen( $subject ) > 65536 ) { return __( 'The value exceeds the validation processing limit.', 'acf_vf' ); }
+				$backtrack = ini_get( 'pcre.backtrack_limit' ); $recursion = ini_get( 'pcre.recursion_limit' );
+				try {
+					if ( ini_set( 'pcre.backtrack_limit', (string)min( (int)$backtrack, 100000 ) ) === false || ini_set( 'pcre.recursion_limit', (string)min( (int)$recursion, 1000 ) ) === false ) { return __( 'Regex validation could not be bounded.', 'acf_vf' ); }
+					$matched = @preg_match( self::regex_pattern( $pattern ), $subject );
+				} finally { ini_set( 'pcre.backtrack_limit', $backtrack ); ini_set( 'pcre.recursion_limit', $recursion ); }
+				if ( 1 !== $matched ) {
 					return $message;
 				}
 			} elseif ( $function === 'php' ) {

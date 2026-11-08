@@ -1,6 +1,7 @@
 <?php
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
+require_once __DIR__ . '/WorkBudget.php';
 
 /** Permission-filtered queries. Pagination and metrics share the same authorized set. */
 final class Query {
@@ -17,6 +18,28 @@ final class Query {
      * @see docs/platform/table-query-implementation.md For filter, sort and metric shapes.
      */
     public static function run(string $object, array $args = [], ?array $native_statuses = null) {
+        return self::execute($object, $args, $native_statuses, false);
+    }
+
+    /** One scan supplies an entire bounded export or snapshot; this is a trusted service API. */
+    public static function collect(string $object, array $args, int $limit) {
+        if ($limit < 1 || $limit > 2000) { return new \WP_Error('query_collection_limit', 'Invalid collection limit.', ['status'=>400]); }
+        return self::execute($object, $args, null, false, $limit);
+    }
+
+    /** Retained bytes for one collected result set, checked as each record is retained. */
+    public static function collection_bytes(): int {
+        return max(1048576, min(134217728, (int) apply_filters('acf_vf/app/query_collection_bytes', 33554432)));
+    }
+
+    /** Validate definitions and current field access without scanning any records. */
+    public static function validate(string $object, array $args = []) {
+        return self::execute($object, $args, null, true);
+    }
+
+    private static function execute(string $object, array $args, ?array $native_statuses, bool $validate_only, int $collection_limit = 0) {
+        // Every attempted query is charged, including validation and empty results.
+        if (!WorkBudget::consume()) { return WorkBudget::error(); }
         if (!Schema::object($object)) { return self::error('Object is unavailable.',404); }
         $current = Schema::assert_current($object);
         if (is_wp_error($current)) { return $current; }
@@ -51,11 +74,12 @@ final class Query {
         unset($column);
         $metrics=self::metrics($args['metrics']??[],$object,$definitions,$types,$used);
         if (is_wp_error($metrics)) { return $metrics; }
-        $items=[]; $keys=[]; $examined=0;
+        if ($validate_only) { return true; }
+        $items=[]; $keys=[]; $examined=0; $retained=0; $byte_limit=$collection_limit ? self::collection_bytes() : 0;
         $scan_limit=max(1,min(10000,(int)apply_filters('acf_vf/app/query_scan_limit',10000,$object)));
         $work=0; $work_limit=max(1,min(10000,(int)apply_filters('acf_vf/app/query_work_limit',10000,$object)));
         $consume=static function(int $cost=1)use(&$work,$work_limit): bool {
-            if ($cost>$work_limit-$work) { return false; }
+            if ($cost>$work_limit-$work || !WorkBudget::consume($cost)) { return false; }
             $work+=$cost; return true;
         };
         // Index accepts flat conjunctions only. Transformed/date predicates must scan.
@@ -66,10 +90,12 @@ final class Query {
             $query_args=['post_type'=>$object,'post_status'=>$statuses,'posts_per_page'=>200,'paged'=>$batch,'fields'=>'ids','orderby'=>'ID','order'=>'ASC','no_found_rows'=>true,'suppress_filters'=>false];
             if (is_array($candidates)) { $query_args['post__in']=$candidates?:[0]; }
             $query_args=apply_filters('acf_vf/app/query_post_args',$query_args,$object);
+            if (!$consume()) { return self::work_capacity(); }
             $query=new \WP_Query($query_args);
             foreach ($query->posts as $id) {
                 if (!$consume()) { return self::work_capacity(); }
                 $record=Records::read((int)$id);
+                if (is_wp_error($record) && $record->get_error_code() === 'request_work_capacity') { return $record; }
                 if (is_wp_error($record)) { continue; }
                 foreach ($used as $name=>$_) { if (isset($definitions[$name]) && !array_key_exists($name,$record['fields'])) { continue 2; } }
                 // Resolve every display dependency before capacity and OR evaluation.
@@ -97,6 +123,8 @@ final class Query {
                 }
                 if (!self::tree_matches($filters,$values,$definitions,$types)) { continue; }
                 $keys[$record['id']]=$row_keys; $items[]=$record;
+                if ($byte_limit && ($retained+=strlen((string)wp_json_encode($record)))>$byte_limit) { return new \WP_Error('query_collection_bytes', 'The selected records exceed the supported collection size. Narrow the query or columns.', ['status'=>413]); }
+                if ($collection_limit && count($items)>$collection_limit) { return new \WP_Error('query_collection_capacity', 'Narrow the query to the supported collection limit.', ['status'=>413]); }
             }
             if (count($query->posts)<200) { break; }
         }
@@ -109,12 +137,14 @@ final class Query {
             return ($left['id']<=>$right['id'])*($sort[0]['direction']==='ASC'?1:-1);
         });
         $aggregates=self::aggregate($items,$metrics);
+        if (!WorkBudget::consume(0)) { return WorkBudget::error(); }
         if (is_wp_error($aggregates)) { return $aggregates; }
         $current=Schema::assert_current($object);
         if (is_wp_error($current)) { return $current; }
         $total=count($items);
+        if ($collection_limit && $total > $collection_limit) { return new \WP_Error('query_collection_capacity', 'Narrow the query to the supported collection limit.', ['status'=>413]); }
         $total_pages=(int)ceil($total/$per_page);
-        $page_items=(int)$page>$total_pages?[]:array_slice($items,((int)$page-1)*(int)$per_page,(int)$per_page);
+        $page_items=$collection_limit ? $items : ((int)$page>$total_pages?[]:array_slice($items,((int)$page-1)*(int)$per_page,(int)$per_page));
         $result=['items'=>$page_items,'total'=>$total,'page'=>(int)$page,'per_page'=>(int)$per_page,'total_pages'=>$total_pages];
         if (array_key_exists('metrics',$args)) { $result['metrics']=$aggregates; }
         return $result;

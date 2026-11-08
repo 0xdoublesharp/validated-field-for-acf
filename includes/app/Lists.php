@@ -134,28 +134,24 @@ final class Lists {
         if (is_wp_error($columns)) { return $columns; }
         if (!$columns) { return self::error('lists_columns', 'Select at least one readable column.'); }
         // Validate supplied pagination too, before replacing it for the complete bounded export.
-        $validated = Query::run($object, $query);
+        $validated = Query::validate($object, $query);
         if (is_wp_error($validated)) { return $validated; }
-        if ($validated['total'] > self::EXPORT_LIMIT) { return self::error('lists_export_limit', 'Export exceeds 1000 records. Narrow the query.'); }
         $query['page'] = 1; $query['per_page'] = 100;
         $content = self::csv_row(array_column($columns, 'label')); $total = 0;
-        do {
-            $page = Query::run($object, $query);
-            if (is_wp_error($page)) { return $page; }
-            if ($page['total'] > self::EXPORT_LIMIT) { return self::error('lists_export_limit', 'Export exceeds 1000 records. Narrow the query.'); }
-            foreach ($page['items'] as $record) {
-                if (++$total > self::EXPORT_LIMIT) { return self::error('lists_export_limit', 'Export exceeds 1000 records. Narrow the query.'); }
-                if (!Permissions::can('export', $object, $record['id'])) { return self::error('lists_forbidden', 'Export includes a record unavailable for export.', 403); }
-                $cells = [];
-                foreach ($columns as $column) {
-                    if (!self::builtin($column['field']) && !Permissions::can('read', $object, $record['id'], $column['field'])) { $cells[] = ''; continue; }
-                    $cells[] = self::format_value($object, $record, $column);
-                }
-                $content .= self::csv_row($cells);
-                if (strlen($content) > self::EXPORT_BYTES) { return self::error('lists_export_bytes', 'Export exceeds 5MiB. Narrow the query.'); }
+        $page = Query::collect($object, $query, self::EXPORT_LIMIT);
+        if (is_wp_error($page) && $page->get_error_code() === 'query_collection_capacity') { return self::error('lists_export_limit', 'Export exceeds 1000 records. Narrow the query.'); }
+        if (is_wp_error($page)) { return $page; }
+        foreach ($page['items'] as $record) {
+            ++$total;
+            if (!Permissions::can('export', $object, $record['id'])) { return self::error('lists_forbidden', 'Export includes a record unavailable for export.', 403); }
+            $cells = [];
+            foreach ($columns as $column) {
+                if (!self::builtin($column['field']) && !Permissions::can('read', $object, $record['id'], $column['field'])) { $cells[] = ''; continue; }
+                $cells[] = self::format_value($object, $record, $column);
             }
-            ++$query['page'];
-        } while ($query['page'] <= $page['total_pages']);
+            $content .= self::csv_row($cells);
+            if (strlen($content) > self::EXPORT_BYTES) { return self::error('lists_export_bytes', 'Export exceeds 5MiB. Narrow the query.'); }
+        }
         return ['filename'=>sanitize_file_name($object . '-export.csv'), 'mime_type'=>'text/csv; charset=UTF-8', 'content'=>$content, 'total'=>$total, 'columns'=>$columns];
     }
 

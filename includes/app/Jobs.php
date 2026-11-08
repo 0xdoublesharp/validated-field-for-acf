@@ -157,6 +157,8 @@ final class Jobs {
         $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM $table WHERE status IN ('queued','retry') AND available_at <= %s AND attempts < %d ORDER BY id LIMIT %d", $now, self::MAX_ATTEMPTS, max(1, min(50, $limit))));
         $results = [];
         foreach ($ids as $id) {
+            // Leave unclaimed work untouched once the shared request allowance is spent.
+            if (!WorkBudget::consume(1)) { break; }
             $claimed = $wpdb->query($wpdb->prepare("UPDATE $table SET status='running',locked_at=%s,attempts=attempts+1 WHERE id=%d AND status IN ('queued','retry') AND available_at <= %s", $now, $id, $now));
             if ($claimed !== 1) { continue; }
             $job = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE id=%d", $id), ARRAY_A);
@@ -180,6 +182,14 @@ final class Jobs {
                 $status = 'completed';
             } catch (\Throwable $error_object) {
                 if ($transaction) { Storage::rollback(); }
+                if (WorkBudget::exhausted() && $results) {
+                    // Earlier jobs spent the shared allowance; this job is not at fault, so undo its claim.
+                    // The first job in a batch had the whole allowance and keeps its attempt.
+                    $wpdb->query($wpdb->prepare("UPDATE $table SET status=%s,locked_at=NULL,attempts=attempts-1 WHERE id=%d AND status='running' AND locked_at=%s AND attempts=%d", (int) $job['attempts'] > 1 ? 'retry' : 'queued', $id, $now, $job['attempts']));
+                    wp_set_current_user($previous_user);
+                    $results[(int) $id] = 'deferred';
+                    break;
+                }
                 $current = $wpdb->get_var($wpdb->prepare("SELECT status FROM $table WHERE id=%d AND attempts=%d", $id, $job['attempts']));
                 $committed = $current === 'completed';
                 $status = $committed ? 'completed' : ($current === 'blocked' ? 'blocked' : ((int) $job['attempts'] >= self::MAX_ATTEMPTS ? 'failed' : 'retry'));

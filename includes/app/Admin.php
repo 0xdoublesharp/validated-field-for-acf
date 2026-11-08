@@ -115,6 +115,7 @@ final class Admin {
                         $type = $field['type'] === 'validated_field' ? ($field['sub_field']['type'] ?? '') : $field['type'];
                         $multiple = $type === 'relationship' || !empty($field['multiple']);
                         $result = Query::run($slug, ['per_page' => 20, 'filters' => [['field' => $name, 'operator' => $multiple ? 'contains' : 'eq', 'value' => $id]]]);
+                        if (is_wp_error($result) && in_array($result->get_error_code(), ['request_work_capacity','query_work_capacity','query_capacity'], true)) { return $result; }
                         if (!is_wp_error($result)) { $related[] = ['object' => $slug, 'label' => $definition['label'], 'field' => $name, 'multiple' => $multiple, 'result' => $result]; }
                     }
                 }
