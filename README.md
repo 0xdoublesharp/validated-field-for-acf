@@ -114,7 +114,7 @@ The 2.0 development build declares WordPress **6.0+**, PHP **8.0+** and Advanced
 Use a test site with a database backup. Clone this public repository into your WordPress plugins directory, keeping the folder name `validated-field-for-acf`, then activate **Advanced Custom Fields: Validated Field** in WordPress.
 
 ```sh
-git clone --branch main https://github.com/doublesharp/validated-field-for-acf.git \
+git clone --branch main https://github.com/0xdoublesharp/validated-field-for-acf.git \
   wp-content/plugins/validated-field-for-acf
 ```
 
@@ -165,7 +165,7 @@ The current ACF 6+ adapter is [`includes/class-acf-field-validated-field.php`](i
 
 Version **2.0.0 is unreleased**. The Free and Pro capabilities above are development functionality, not a claim of production readiness or public Pro availability. Current-runtime checks do not establish support across every declared minimum version, complete PHP branch coverage or compatibility with every third-party integration.
 
-For the plugin reference and changelog, see [`readme.txt`](readme.txt). Report reproducible bugs through [GitHub Issues](https://github.com/doublesharp/validated-field-for-acf/issues), including your WordPress, PHP, ACF and plugin versions.
+For the plugin reference and changelog, see [`readme.txt`](readme.txt). Report reproducible bugs through [GitHub Issues](https://github.com/0xdoublesharp/validated-field-for-acf/issues), including your WordPress, PHP, ACF and plugin versions.
 
 ---
 
