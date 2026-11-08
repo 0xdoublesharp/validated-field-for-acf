@@ -284,8 +284,8 @@ final class Records {
             $post = ['post_type' => $object, 'post_status' => $status, 'post_title' => $payload['title'] ?? ($before['title'] ?? '')];
             if ($id) { $post['ID'] = $id; Storage::touch($id); }
             else { $post['post_author'] = get_current_user_id(); }
-            $native_update=$id && !empty(Schema::object($object)['native_table']);
-            $saved_id = self::native_write($id, $object, static function () use ($post,$native_update) { return $native_update?wp_update_post(wp_slash($post),true):wp_insert_post(wp_slash($post), true); });
+            // Updates merge the stored post so the owner, creation date, slug and ordering survive another user's edit.
+            $saved_id = self::native_write($id, $object, static function () use ($post) { return !empty($post['ID']) ? wp_update_post(wp_slash($post), true) : wp_insert_post(wp_slash($post), true); });
             if (is_wp_error($saved_id)) { Storage::rollback(); return self::error('record_write', 'Record could not be saved.', 500); }
             $id = (int) $saved_id;
             Storage::touch($id);
