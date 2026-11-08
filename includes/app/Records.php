@@ -192,6 +192,11 @@ final class Records {
         }
     }
 
+    /** Stored public-shaped value of one field, before any reader projection. Authorize first. */
+    public static function stored_field(int $id, array $field) {
+        return self::public_value(get_field($field['key'], $id, false), $field);
+    }
+
     private static function raw(int $id): array {
         $post = get_post($id);
         $values = [];
@@ -256,6 +261,8 @@ final class Records {
             if (!is_array($values)) { Storage::rollback(); return self::error('prepare_fields', 'A field preparation handler failed.', 500); }
             $valid = self::validate_proposed($object, $values, $id, $context, $status);
             if (is_wp_error($valid)) { Storage::rollback(); return $valid; }
+            $references = self::reference_access($object, $input, $before['fields'] ?? []);
+            if (is_wp_error($references)) { Storage::rollback(); return $references; }
             $transition = apply_filters('acf_vf/app/validate_transition', true, $object, $before, ['id'=>$id,'status'=>$status,'fields'=>$values], $context);
             if (is_wp_error($transition)) { Storage::rollback(); return $transition; }
             if ($transition !== true) { Storage::rollback(); return self::error('transition_handler','Transition validation failed.',500); }
@@ -405,6 +412,19 @@ final class Records {
             return new \WP_Error('validation', 'Record validation failed.', ['status' => 422, 'errors' => array_values($errors)]);
         }
         return Unique::check($object, $values, $id);
+    }
+
+    /** Newly submitted native references must point at targets the writer can read. */
+    private static function reference_access(string $object, array $input, array $before) {
+        foreach (Schema::fields($object) as $name => $field) {
+            if (!array_key_exists($name, $input) || !empty($field['relationship']) || !References::has($field)) { continue; }
+            if (array_key_exists($name, $before) && $before[$name] === $input[$name]) { continue; }
+            if (!References::readable($field, $input[$name])) {
+                if (WorkBudget::exhausted()) { return WorkBudget::error(); }
+                return new \WP_Error('validation', 'Record validation failed.', ['status' => 422, 'errors' => [['field' => $name, 'code' => 'reference_forbidden', 'message' => 'A referenced item is unavailable.']]]);
+            }
+        }
+        return true;
     }
 
     /** Convert nested field names to native ACF keys for validation and persistence. */

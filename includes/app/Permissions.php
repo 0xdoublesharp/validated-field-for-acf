@@ -72,6 +72,27 @@ final class Permissions {
     }
 
     public static function readable_fields(string $object, int $id, array $values): array {
-        return array_filter($values, static function ($name) use ($object, $id) { return self::can('read', $object, $id, $name); }, ARRAY_FILTER_USE_KEY);
+        foreach ($values as $name => $value) {
+            if (!self::can('read', $object, $id, $name) || ($id && !ComputedAccess::matches($object, $id, $name, $value))) { unset($values[$name]); continue; }
+            $definition = Schema::fields($object)[$name] ?? [];
+            $relationship = $definition['relationship'] ?? null;
+            if (!$relationship) {
+                // Native reference leaves, including nested rows and media, keep only targets the
+                // reader may see; a single unreadable or malformed reference withholds the field.
+                if (!References::has($definition)) { continue; }
+                [$shown, $projected] = References::visible($definition, $value);
+                if ($shown) { $values[$name] = $projected; } else { unset($values[$name]); }
+                continue;
+            }
+            // Plugin relationships are object-bound: any unreadable target withholds the field.
+            $target = $relationship['object'] ?? '';
+            $ids = Relationships::ids($value);
+            // Target authorization is charged per target; exhaustion omits the field.
+            if (!is_string($target) || $target === '' || is_wp_error($ids) || !WorkBudget::consume(count($ids))) { unset($values[$name]); continue; }
+            foreach ($ids as $target_id) {
+                if (get_post_type($target_id) !== $target || get_post_status($target_id) === 'trash' || !self::can('read', $target, $target_id)) { unset($values[$name]); break; }
+            }
+        }
+        return $values;
     }
 }
