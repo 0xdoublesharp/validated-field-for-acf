@@ -292,13 +292,21 @@ final class Records {
             global $wpdb;
             $native_context = class_exists(NativeFields::class) && is_callable([NativeFields::class, 'begin_record_write']);
             if ($native_context) { NativeFields::begin_record_write($object, $id, $values); }
+            // Legacy uniqueness locks taken by these writes are released here, not at host teardown.
+            $legacy = class_exists('ACF_VF_Validation') && is_callable(['ACF_VF_Validation', 'unique_lock_names']);
+            $legacy_locks = $legacy ? \ACF_VF_Validation::unique_lock_names() : [];
+            if ($legacy) { \ACF_VF_Validation::take_unique_busy(); }
             try {
             foreach (Schema::fields($object) as $name => $field) {
                 $wpdb->last_error = '';
                 self::native_write($id, $object, static function () use ($field, $values, $name, $id) { return update_field($field['key'], self::native_value($values[$name] ?? null, $field), $id); });
                 if ($wpdb->last_error) { Storage::rollback(); return self::error('field_write', 'A field could not be saved.', 500); }
             }
-            } finally { if ($native_context) { NativeFields::end_record_write(); } }
+            if ($legacy && \ACF_VF_Validation::take_unique_busy()) { Storage::rollback(); return self::error('record_busy', 'A unique value is being changed; retry the request.', 409); }
+            } finally {
+                if ($native_context) { NativeFields::end_record_write(); }
+                if ($legacy) { \ACF_VF_Validation::release_unique_locks_except($legacy_locks); }
+            }
             $version = ($before['version'] ?? 0) + 1;
             $version_saved = self::native_write($id, $object, static function () use ($id, $version) { return update_post_meta($id, '_vf_app_version', $version); });
             if ($version_saved === false) { Storage::rollback(); return self::error('version_write', 'Record version could not be saved.', 500); }

@@ -124,11 +124,20 @@ final class Storage {
 
     public static function in_transaction(): bool { return self::$depth > 0; }
 
+    /**
+     * Named locks are server-wide, so their names bind the database and table prefix. Independent
+     * sites sharing a server and prefix no longer contend; one site still shares one lock name.
+     */
+    public static function lock_domain(): string {
+        global $wpdb;
+        return (string) ($wpdb->dbname ?? (defined('DB_NAME') ? DB_NAME : '')) . '|' . $wpdb->prefix;
+    }
+
     public static function touch(int $id): void { self::$touched[$id] = true; }
 
     public static function lock(string $name) {
         global $wpdb;
-        $name = 'vfa_' . substr(hash('sha256', $wpdb->prefix . $name), 0, 56);
+        $name = 'vfa_' . substr(hash('sha256', self::lock_domain() . $name), 0, 56);
         if (isset(self::$locks[$name])) { return true; }
         if ((int) $wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s, 5)', $name)) !== 1) {
             return new \WP_Error('record_busy', 'Record is being changed; retry the request.', ['status' => 409]);

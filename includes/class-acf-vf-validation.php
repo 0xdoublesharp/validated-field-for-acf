@@ -2,6 +2,86 @@
 
 /** Extra validation for native ACF fields wrapped by Validated Field. */
 class ACF_VF_Validation {
+	private static $unique_locks = array();
+	private static $unique_pending = array();
+	private static $unique_hooks = false;
+	private static $unique_work = 0;
+
+	/** Serialize the final uniqueness decision through ACF's later metadata write. */
+	public static function begin_unique_write( $post_id, $field ) {
+		if ( !in_array( $field['unique'] ?? '', array( 'global', 'post_type', 'post_key', 'this_post', 'this_post_key' ), true ) ) { return true; }
+		global $wpdb;
+		$kind = acf_decode_post_id( $post_id )['type'];
+		$domain = class_exists( '\\ACF_VF\\App\\Storage' ) ? \ACF_VF\App\Storage::lock_domain() : $wpdb->prefix;
+		$name = 'vf_unique_' . substr( hash( 'sha256', $domain . ':' . $kind ), 0, 48 );
+		if ( !isset( self::$unique_locks[$name] ) ) {
+			if ( (int)$wpdb->get_var( $wpdb->prepare( 'SELECT GET_LOCK(%s,1)', $name ) ) !== 1 ) { return false; }
+			self::$unique_locks[$name] = true;
+		}
+		$decoded = acf_decode_post_id( $post_id );
+		$key = $kind === 'option' ? $decoded['id'] . '_' . $field['name'] : $field['name'];
+		self::$unique_pending[$name][$kind . ':' . ( $kind === 'option' ? '' : $decoded['id'] ) . ':' . $key] = true;
+		if ( !self::$unique_hooks ) {
+			self::$unique_hooks = true;
+			foreach ( array( 'post', 'user', 'term', 'comment' ) as $type ) {
+				foreach ( array( 'added_', 'updated_', 'deleted_' ) as $event ) {
+					add_action( $event . $type . '_meta', static function ( $mid, $id, $key ) use ( $type ) { self::unique_written( $type . ':' . $id . ':' . $key ); }, PHP_INT_MAX, 3 );
+				}
+			}
+			foreach ( array( 'added_option', 'updated_option', 'deleted_option' ) as $event ) { add_action( $event, static function ( $key ) { self::unique_written( 'option::' . $key ); }, PHP_INT_MAX ); }
+			// ACF may skip an unchanged metadata write; teardown is the fallback.
+			register_shutdown_function( array( __CLASS__, 'release_unique_locks' ) );
+		}
+		return true;
+	}
+
+	private static function unique_written( $key ) {
+		global $wpdb;
+		foreach ( self::$unique_pending as $name => $pending ) {
+			unset( self::$unique_pending[$name][$key] );
+			if ( !self::$unique_pending[$name] ) {
+				$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+				unset( self::$unique_locks[$name], self::$unique_pending[$name] );
+			}
+		}
+	}
+
+	private static $unique_busy = false;
+	private static $unique_request = null;
+
+	/** Names of currently held uniqueness locks, for scoped release by an enclosing writer. */
+	public static function unique_lock_names() { return array_keys( self::$unique_locks ); }
+
+	/** Release locks acquired after an enclosing writer's snapshot, keeping any it already held. */
+	public static function release_unique_locks_except( array $keep ) {
+		global $wpdb;
+		foreach ( array_keys( self::$unique_locks ) as $name ) {
+			if ( in_array( $name, $keep, true ) ) { continue; }
+			$wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) );
+			unset( self::$unique_locks[$name], self::$unique_pending[$name] );
+		}
+	}
+
+	/** Lock contention is recorded so an application writer can fail instead of keeping a stale value. */
+	public static function mark_unique_busy() { self::$unique_busy = true; }
+	public static function take_unique_busy() { $busy = self::$unique_busy; self::$unique_busy = false; return $busy; }
+
+	public static function release_unique_locks() {
+		global $wpdb;
+		foreach ( self::$unique_locks as $name => $unused ) { $wpdb->get_var( $wpdb->prepare( 'SELECT RELEASE_LOCK(%s)', $name ) ); }
+		self::$unique_locks = array();
+		self::$unique_pending = array();
+		self::$unique_work = 0;
+	}
+
+	/**
+	 * Approval is bound to code and field identity using a site-only key. Only a code administrator
+	 * can create one; anyone else may only retain the approval already stored on this field, so a
+	 * copied or previously revoked signature cannot be replayed.
+	 *
+	 * @param array      $field    Proposed field settings.
+	 * @param array|null $previous Stored settings of the same field, when it already exists.
+	 */
 	public static function approve_php( $field, $previous = null ) {
 		if ( ( $field['function'] ?? '' ) !== 'php' ) { unset( $field['_vf_php_signature'] ); return $field; }
 		if ( current_user_can( 'edit_plugins' ) || current_user_can( 'install_plugins' ) ) {
@@ -174,6 +254,7 @@ class ACF_VF_Validation {
 		self::$capturing_save = false;
 		acf_set_form_data( 'vf_post_id', false );
 		acf_set_form_data( 'vf_screen', false );
+		self::release_unique_locks();
 	}
 	/** Flatten the submitted field tree using registered ACF definitions, never field-name guesses. */
 
@@ -457,6 +538,9 @@ class ACF_VF_Validation {
 		if ( !in_array( $scope, array( 'global', 'post_type', 'post_key', 'this_post', 'this_post_key' ), true ) ) {
 			return true;
 		}
+		if ( !in_array( $scope, array( 'this_post', 'this_post_key' ), true ) && !current_user_can( 'edit_plugins' ) && !current_user_can( 'install_plugins' ) && !apply_filters( 'acf_vf/allow_cross_record_unique', false, $field, $post_id ) ) {
+			return __( 'Cross-record uniqueness is unavailable for this operation.', 'acf_vf' );
+		}
 		$duplicate = __( 'This value must be unique.', 'acf_vf' );
 		$key_scope = in_array( $scope, array( 'post_key', 'this_post_key' ), true );
 		$atoms = self::atoms( $value );
@@ -471,7 +555,9 @@ class ACF_VF_Validation {
 				return $duplicate;
 			}
 		}
-		return self::stored_duplicate( $value, $post_id, $name, $shape, $scope, $field, $entries ) ? $duplicate : true;
+		$stored = self::stored_duplicate( $value, $post_id, $name, $shape, $scope, $field, $entries );
+		if ( $stored === null ) { return __( 'Uniqueness validation exceeds the processing limit. Narrow the scope.', 'acf_vf' ); }
+		return $stored ? $duplicate : true;
 	}
 	/** Post scopes use post statuses; user scopes stay in usermeta and options stay in their named namespace. */
 
@@ -531,34 +617,50 @@ class ACF_VF_Validation {
 			$val = 'option_value';
 			$where[] = 'm.option_name LIKE %s';
 			$args[] = $wpdb->esc_like( $id . '_' ) . '%';
+		} elseif ( $kind === 'term' ) {
+			$table = $wpdb->termmeta;
+			$pk = 'meta_id';
+			$owner = 'term_id';
+			$key = 'meta_key';
+			$val = 'meta_value';
+			if ( in_array( $scope, array( 'post_type', 'post_key' ), true ) ) {
+				$term = get_term( (int)$id );
+				$taxonomy = $term instanceof WP_Term ? $term->taxonomy : acf_get_form_data( 'taxonomy' );
+				if ( !is_string( $taxonomy ) || $taxonomy === '' ) { return null; }
+				$join = " JOIN {$wpdb->term_taxonomy} tt ON tt.term_id=m.term_id";
+				$where[] = 'tt.taxonomy=%s';
+				$args[] = $taxonomy;
+			}
+		} elseif ( $kind === 'comment' ) {
+			$table = $wpdb->commentmeta;
+			$pk = 'meta_id';
+			$owner = 'comment_id';
+			$key = 'meta_key';
+			$val = 'meta_value';
 		} else {
-			return false;
+			// An unsupported storage identity cannot be proven unique.
+			return null;
 		}
 		if ( $this_only && $owner ) {
 			$where[] = "m.$owner=%s";
 			$args[] = $id;
 		}
-		$candidates = array();
-		foreach ( self::atoms( $value ) as $atom ) {
-			$candidates[] = "m.$val=%s";
-			$args[] = $atom;
-			foreach ( array( 's:' . strlen( $atom ) . ':"' . $atom . '";', 'i:' . $atom . ';' ) as $token ) {
-				$candidates[] = "m.$val LIKE %s";
-				$args[] = '%' . $wpdb->esc_like( $token ) . '%';
-			}
-		}
-		if ( !$candidates ) {
-			return false;
-		}
-		$where[] = '(' . implode( ' OR ', $candidates ) . ')';
+		// Scan bounded metadata pages rather than searching serialized values with
+		// leading-wildcard SQL predicates. A partial scan is never treated as unique.
+		if ( !$where ) { $where[] = '1=1'; }
 		$replaced = array( $name => true );
 		foreach ( $entries as $item ) {
 			$replaced[$item['name']] = true;
 		}
 		$last = 0;
+		$request = class_exists( '\\ACF_VF\\App\\WorkBudget' ) ? \ACF_VF\App\WorkBudget::request_id() : (string)( $_SERVER['REQUEST_TIME_FLOAT'] ?? '' );
+		if ( self::$unique_request !== $request ) { self::$unique_request = $request; self::$unique_work = 0; }
 		do {
+			if ( self::$unique_work >= 10000 ) { return null; }
 			$sql = "SELECT m.$pk AS cursor_id," . ( $owner ? "m.$owner" : "0" ) . " AS owner_id,m.$key AS meta_name,m.$val AS stored FROM $table m$join WHERE " . implode( ' AND ', $where ) . " AND m.$pk>%d ORDER BY m.$pk LIMIT 250";
 			$rows = $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $args, array( $last ) ) ) );
+			if ( $wpdb->last_error ) { return null; }
+			self::$unique_work += count( $rows );
 			foreach ( $rows as $row ) {
 				$last = (int)$row->cursor_id;
 				$meta = $row->meta_name;

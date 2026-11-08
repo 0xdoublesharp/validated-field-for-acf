@@ -128,6 +128,7 @@ class acf_field_validated_field extends acf_field {
 	}
 	public function update_value( $value, $post_id, $field ) {
 		$native = $this->native_field( $field );
+		if ( !ACF_VF_Validation::begin_unique_write( $post_id, $field ) ) { ACF_VF_Validation::mark_unique_busy(); return acf_get_metadata( $post_id, $field['name'] ); }
 		if ( doing_action( 'acf/save_post' ) ) {
 			// Native paginated repeaters also write untouched rows from their stored snapshot.
 			$entry = ACF_VF_Validation::resolve_save_entry( $field, $value, $post_id );
@@ -136,6 +137,9 @@ class acf_field_validated_field extends acf_field {
 				$valid = ACF_VF_Validation::validate( $valid, $value, $this->validation_field( $field ), $entry['input'], $post_id );
 				if ( true !== $valid ) { return $entry['previous_value']; }
 			}
+		}
+		if ( !doing_action( 'acf/save_post' ) && in_array( $field['unique'] ?? '', array( 'global', 'post_type', 'post_key', 'this_post', 'this_post_key' ), true ) ) {
+			if ( ACF_VF_Validation::validate( true, $value, $this->validation_field( $field ), '', $post_id ) !== true ) { return acf_get_metadata( $post_id, $field['name'] ); }
 		}
 		return apply_filters( 'acf/update_value/type=' . $native['type'], $value, $post_id, $native );
 	}

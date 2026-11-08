@@ -10,6 +10,7 @@ final class NativeTables {
     private static ?string $request_token = null;
     private const OBSERVATION = "_vf_native_observation";
     private const PENDING = "_vf_native_pending_";
+    private static $bulk_meta = [];
     public static function boot(): void {
         foreach (array_keys(self::stored()) as $object) { self::register_hooks((string)$object); }
         add_action('registered_post_type',[self::class,'register_hooks'],50);
@@ -220,15 +221,39 @@ final class NativeTables {
         self::checked($wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'off') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value)",$name,bin2hex(random_bytes(16)))));
         wp_cache_delete($name,'options');
     }
+    private static ?string $token_request = null;
     private static function token(): string {
         global $wpdb;
+        // A persistent worker starts a new lease for each logical request.
+        if (self::$request_token!==null && self::$token_request!==WorkBudget::request_id()) { self::release_token(); }
         if (self::$request_token===null) {
-            $token='vfn_'.substr(hash('sha256',$wpdb->prefix.random_bytes(32)),0,56);
+            // The token names the lock domain that granted it, so a lease cannot be confirmed
+            // released by asking a different server or routed connection.
+            $token='vfn_'.self::domain().'_'.substr(hash('sha256',$wpdb->prefix.random_bytes(32)),0,42);
             if ((int)$wpdb->get_var($wpdb->prepare('SELECT GET_LOCK(%s,0)',$token))!==1) { throw new \RuntimeException('Native observation lease unavailable.'); }
             // Deliberately connection-scoped, unlike Storage transaction locks.
-            self::$request_token=$token;
+            self::$request_token=$token; self::$token_request=WorkBudget::request_id();
+            register_shutdown_function([self::class,'release_token']);
         }
         return self::$request_token;
+    }
+    /** End this request's lease at teardown so interrupted bulk markers become recoverable. */
+    public static function release_token(): void {
+        global $wpdb;
+        if (self::$request_token===null) { return; }
+        $wpdb->get_var($wpdb->prepare('SELECT RELEASE_LOCK(%s)',self::$request_token));
+        self::$request_token=null; self::$token_request=null;
+    }
+    private static function domain(): string {
+        global $wpdb;
+        return substr(hash('sha256',(string)$wpdb->get_var("SELECT CONCAT_WS(':',@@hostname,@@port,@@server_id)").'|'.Storage::lock_domain()),0,16);
+    }
+    /** A lease is treated as live unless its own lock domain reports it free. */
+    private static function lease_active(string $token): bool {
+        global $wpdb;
+        if ($token==='') { return true; }
+        if (preg_match('/^vfn_([a-f0-9]{16})_/',$token,$matches) && !hash_equals($matches[1],self::domain())) { return true; }
+        return $wpdb->get_var($wpdb->prepare('SELECT IS_USED_LOCK(%s)',$token))!==null;
     }
     private static function affected(array &$objects,$object): void {
         if (is_string($object) && self::enabled($object)) { $objects[$object]=true; }
@@ -341,12 +366,14 @@ final class NativeTables {
         return $data;
     }
     public static function changing_meta($meta_id,$id,$key,$value=null): void {
+        if (!(int)$id) { self::bulk_metadata((string)$key, false); return; }
         $id=(int)$id; $post=self::raw_post($id);
         if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
         self::observe($id);
         if (!Records::is_writing($id)) { self::fence($id,[$post['post_type']],['kind'=>'meta','event'=>current_filter(),'key'=>$key,'value'=>hash('sha256',serialize($value))]); }
     }
     public static function changed_meta($meta_id,$id,$key,$value=null): void {
+        if (!(int)$id) { self::bulk_metadata((string)$key, true); return; }
         $id=(int)$id; $post=self::raw_post($id);
         if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
         self::observe($id);
@@ -362,6 +389,34 @@ final class NativeTables {
         $ids=(array)$ids;
         if (count($ids)>50) { return; } // Public single-record core mutations use one ID.
         foreach ($ids as $id) { self::observe((int)$id,null,null,false,['post_type'=>$object]); }
+    }
+
+    /** A delete-all notification has no record ID; fence every selected native projection. */
+    private static function bulk_metadata(string $key, bool $completed): void {
+        global $wpdb;
+        if ($completed && empty(self::$bulk_meta[$key])) { return; }
+        // Each start pushes one frame (possibly empty) and each completion pops its own frame.
+        $objects = $completed ? array_pop(self::$bulk_meta[$key]) : [];
+        if ($completed && !self::$bulk_meta[$key]) { unset(self::$bulk_meta[$key]); }
+        if (!$completed) {
+            foreach (array_keys(self::stored()) as $object) {
+                if (self::enabled($object) && self::selected($object, $key)) {
+                    $objects[$object] = 'acf_vf_native_insert_'.$object.'_bulk_'.bin2hex(random_bytes(12));
+                }
+            }
+        }
+        if (!$objects) { if (!$completed) { self::$bulk_meta[$key][] = []; } return; }
+        $begin = Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native bulk metadata barrier unavailable.'); }
+        $active = true;
+        try {
+            foreach ($objects as $object=>$name) {
+                self::invalidate($object);
+                if ($completed) { self::checked($wpdb->delete($wpdb->options, ['option_name'=>$name])); }
+                else { self::checked($wpdb->insert($wpdb->options, ['option_name'=>$name,'option_value'=>wp_json_encode(['token'=>self::token(),'kind'=>'bulk_metadata']),'autoload'=>'off'])); }
+            }
+            self::commit($active);
+            if (!$completed) { self::$bulk_meta[$key][] = $objects; }
+        } catch (\Throwable $error) { if ($active) { Storage::rollback(); } throw $error; }
     }
     public static function cleaned_post(int $id,$post): void { self::observe($id,null,null,false,(array)$post); }
     public static function transitioning_post(string $new,string $old,$post): void {
@@ -433,12 +488,12 @@ final class NativeTables {
             self::observe((int)$row['post_id']);
             if ($wpdb->get_var($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE meta_id=%d",$row['meta_id']))===null) { continue; }
             $intent=json_decode($row['meta_value'],true); $token=$intent['token']??'';
-            if (!$token || $wpdb->get_var($wpdb->prepare('SELECT IS_USED_LOCK(%s)',$token))!==null) { return Rest::error('native_write_pending','A native write has not completed. Retry after its request ends.',409); }
+            if (self::lease_active((string)$token)) { return Rest::error('native_write_pending','A native write has not completed. Retry after its request ends.',409); }
             self::checked($wpdb->delete($wpdb->postmeta,['meta_id'=>$row['meta_id']])); self::invalidate($object);
         }
         foreach ($inserts as $row) {
             $intent=json_decode($row['option_value'],true); $token=$intent['token']??'';
-            if (!$token || $wpdb->get_var($wpdb->prepare('SELECT IS_USED_LOCK(%s)',$token))!==null) { return Rest::error('native_write_pending','A native insertion has not completed. Retry after its request ends.',409); }
+            if (self::lease_active((string)$token)) { return Rest::error('native_write_pending','A native insertion has not completed. Retry after its request ends.',409); }
             self::checked($wpdb->delete($wpdb->options,['option_name'=>$row['option_name']])); self::invalidate($object);
         }
         return true;

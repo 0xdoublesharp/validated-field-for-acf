@@ -323,6 +323,10 @@ final class Schema {
         foreach ($with_revisions as &$definition) { if (!isset($definition['_revision'])) { $definition['_revision'] = self::revision($definition); } }
         unset($definition);
         if (self::hash($with_revisions) !== self::hash($expected)) { return self::error('schema_conflict', 'Configuration changed. Reload and retry.', 409); }
+        foreach ($normalized as $slug=>$definition) {
+            $reconciled = Unique::reconcile($slug, $definition, $expected[$slug] ?? null);
+            if (is_wp_error($reconciled)) { return $reconciled; }
+        }
         foreach (array_diff(array_keys($before), array_keys($normalized)) as $removed_object) {
             $released = Unique::release_object($removed_object);
             if (is_wp_error($released)) { return $released; }
