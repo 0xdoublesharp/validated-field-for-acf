@@ -222,10 +222,13 @@ final class NativeTables {
         wp_cache_delete($name,'options');
     }
     private static ?string $token_request = null;
+    /** A persistent worker ends the previous logical request's lease before any lease decision. */
+    private static function rotate_token(): void {
+        if (self::$request_token!==null && self::$token_request!==WorkBudget::request_id()) { self::release_token(); }
+    }
     private static function token(): string {
         global $wpdb;
-        // A persistent worker starts a new lease for each logical request.
-        if (self::$request_token!==null && self::$token_request!==WorkBudget::request_id()) { self::release_token(); }
+        self::rotate_token();
         if (self::$request_token===null) {
             // The token names the lock domain that granted it, so a lease cannot be confirmed
             // released by asking a different server or routed connection.
@@ -251,6 +254,8 @@ final class NativeTables {
     /** A lease is treated as live unless its own lock domain reports it free. */
     private static function lease_active(string $token): bool {
         global $wpdb;
+        // This process's own lock from an earlier request must not look like live work.
+        self::rotate_token();
         if ($token==='') { return true; }
         if (preg_match('/^vfn_([a-f0-9]{16})_/',$token,$matches) && !hash_equals($matches[1],self::domain())) { return true; }
         return $wpdb->get_var($wpdb->prepare('SELECT IS_USED_LOCK(%s)',$token))!==null;
