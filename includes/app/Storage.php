@@ -9,6 +9,7 @@ final class Storage {
     private static $marks = [];
     private static $touched = [];
     private static $locks = [];
+    public const VERSION = '3';
 
     public static function table(string $name): string {
         global $wpdb;
@@ -17,7 +18,7 @@ final class Storage {
     }
 
     public static function install(): void {
-        if (get_option('acf_vf_app_storage_version') === '2') { return; }
+        if (get_option('acf_vf_app_storage_version') === self::VERSION) { return; }
         global $wpdb;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
         $charset = $wpdb->get_charset_collate();
@@ -32,8 +33,11 @@ final class Storage {
             before_data longtext NOT NULL,
             after_data longtext NOT NULL,
             created_at datetime NOT NULL,
+            bytes int(10) unsigned NOT NULL DEFAULT 0,
             PRIMARY KEY  (id),
-            KEY record_id (record_id)
+            KEY record_id (record_id),
+            KEY actor_bytes (actor_id,bytes),
+            KEY created_at (created_at)
         ) ENGINE=InnoDB $charset;");
         dbDelta("CREATE TABLE $jobs (
             id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -46,9 +50,13 @@ final class Storage {
             completed_at datetime NULL,
             last_error text NOT NULL,
             idempotency_key varchar(191) NULL,
+            actor_id bigint(20) unsigned NOT NULL DEFAULT 0,
+            payload_bytes int(10) unsigned NOT NULL DEFAULT 0,
             PRIMARY KEY  (id),
             UNIQUE KEY idempotency_key (idempotency_key),
-            KEY due_jobs (status,available_at)
+            KEY due_jobs (status,available_at),
+            KEY actor_jobs (actor_id,status,payload_bytes),
+            KEY terminal_jobs (status,completed_at)
         ) ENGINE=InnoDB $charset;");
         dbDelta("CREATE TABLE $unique (
             key_hash char(64) NOT NULL,
@@ -77,7 +85,15 @@ final class Storage {
         foreach ([$audit, $jobs, $unique, $index] as $table) {
             if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $wpdb->esc_like($table))) !== $table) { throw new \RuntimeException('Platform storage installation failed.'); }
         }
-        update_option('acf_vf_app_storage_version', '2', false);
+        // Version 3 moves admission metadata out of JSON payloads and timestamps
+        // terminal failures so quotas and retention never parse retained bodies.
+        $migrations = [
+            "UPDATE $jobs SET actor_id=CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(payload,'$._actor')),'0') AS UNSIGNED),payload_bytes=OCTET_LENGTH(payload) WHERE payload_bytes=0",
+            "UPDATE $jobs SET completed_at=available_at WHERE status='failed' AND completed_at IS NULL",
+            "UPDATE $audit SET bytes=OCTET_LENGTH(before_data)+OCTET_LENGTH(after_data) WHERE bytes=0",
+        ];
+        foreach ($migrations as $sql) { if ($wpdb->query($sql) === false) { throw new \RuntimeException('Platform storage migration failed.'); } }
+        update_option('acf_vf_app_storage_version', self::VERSION, false);
     }
 
     /**

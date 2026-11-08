@@ -53,7 +53,7 @@ final class Jobs {
         if (!wp_next_scheduled('acf_vf_app_jobs')) { wp_schedule_single_event(time() + 60, 'acf_vf_app_jobs'); }
     }
 
-    public static function tick(): void { self::run(10); self::schedule(); }
+    public static function tick(): void { Retention::cleanup(); self::run(10); self::schedule(); }
 
     /** Preserve unavailable work for explicit administrator review, without creating storage. */
     public static function park_unavailable(?array $kinds = null): void {
@@ -94,6 +94,21 @@ final class Jobs {
      * @return int|\WP_Error New job ID, existing idempotent job ID, or queue error.
      */
     public static function enqueue(string $kind, array $payload, array $options = []) {
+        if (!isset(self::$handlers[$kind]) || !get_current_user_id()) { return new \WP_Error('job_kind', 'Job type or actor is unavailable.'); }
+        if (!WorkBudget::consume()) { return WorkBudget::error(); }
+        $own = !Storage::in_transaction();
+        if ($own) { $begin = Storage::begin(); if (is_wp_error($begin)) { return $begin; } }
+        try {
+            $result = self::enqueue_locked($kind, $payload, $options);
+            if ($own) {
+                if (is_wp_error($result)) { Storage::rollback(); }
+                elseif (!Storage::commit()) { return new \WP_Error('job_storage', 'Job could not be committed.', ['status'=>503]); }
+            }
+            return $result;
+        } catch (\Throwable $error) { if ($own) { Storage::rollback(); } return new \WP_Error('job_storage', 'Job could not be queued.', ['status'=>503]); }
+    }
+
+    private static function enqueue_locked(string $kind, array $payload, array $options) {
         global $wpdb;
         if (!isset(self::$handlers[$kind]) || !get_current_user_id()) { return new \WP_Error('job_kind', 'Job type or actor is unavailable.'); }
         $delay = $options['delay'] ?? 0;
@@ -112,8 +127,10 @@ final class Jobs {
             $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE idempotency_key=%s", $key));
             if ($existing) { return (int) $existing; }
         }
+        $capacity = Retention::reserve_job(get_current_user_id(), strlen($encoded));
+        if (is_wp_error($capacity)) { return $capacity; }
         $previous_errors = $wpdb->suppress_errors(true);
-        try { $ok = $wpdb->insert($table, ['kind' => $kind, 'payload' => $encoded, 'status' => 'queued', 'attempts' => 0, 'available_at' => gmdate('Y-m-d H:i:s', time() + (int) $delay), 'idempotency_key' => $key, 'last_error' => '']); }
+        try { $ok = $wpdb->insert($table, ['kind' => $kind, 'payload' => $encoded, 'status' => 'queued', 'attempts' => 0, 'available_at' => gmdate('Y-m-d H:i:s', time() + (int) $delay), 'idempotency_key' => $key, 'last_error' => '', 'actor_id' => get_current_user_id(), 'payload_bytes' => strlen($encoded)]); }
         finally { $wpdb->suppress_errors($previous_errors); }
         if (!$ok && $key) {
             $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE idempotency_key=%s", $key));
@@ -150,7 +167,9 @@ final class Jobs {
             $data['_history'] = array_slice($data['_history'], -20);
             $previous_errors = $wpdb->suppress_errors(true);
             $held=!isset(self::$handlers[$lease['kind']]) || (isset($paused[$lease['kind']]) && $lease['locked_at'] <= $paused[$lease['kind']]);
-            try { $wpdb->update($table, ['status' => $held ? 'blocked' : ((int) $lease['attempts'] >= self::MAX_ATTEMPTS ? 'failed' : 'retry'), 'locked_at' => null, 'payload' => wp_json_encode($data), 'last_error'=>$held ? 'provider_missing' : ''], ['id' => $lease['id'], 'status' => 'running', 'locked_at' => $lease['locked_at']]); }
+            $recovered = $held ? 'blocked' : ((int) $lease['attempts'] >= self::MAX_ATTEMPTS ? 'failed' : 'retry');
+            $encoded = wp_json_encode($data);
+            try { $wpdb->update($table, ['status' => $recovered, 'locked_at' => null, 'payload' => $encoded, 'payload_bytes' => strlen((string) $encoded), 'last_error'=>$held ? 'provider_missing' : '', 'completed_at' => $recovered === 'failed' ? $now : null], ['id' => $lease['id'], 'status' => 'running', 'locked_at' => $lease['locked_at']]); }
             finally { $wpdb->suppress_errors($previous_errors); }
         }
         self::park_unavailable();
@@ -205,7 +224,8 @@ final class Jobs {
         global $wpdb;
         $payload['_history'][] = ['attempt' => (int) $job['attempts'], 'at' => gmdate('c'), 'status' => $status];
         $payload['_history'] = array_slice($payload['_history'], -20);
-        $changes = ['status' => $status, 'locked_at' => null, 'payload' => wp_json_encode($payload), 'last_error' => $error, 'available_at' => gmdate('Y-m-d H:i:s', time() + min(3600, 30 * (2 ** (int) $job['attempts']))), 'completed_at' => $status === 'completed' ? gmdate('Y-m-d H:i:s') : null];
+        $encoded = (string) wp_json_encode($payload);
+        $changes = ['status' => $status, 'locked_at' => null, 'payload' => $encoded, 'last_error' => $error, 'available_at' => gmdate('Y-m-d H:i:s', time() + min(3600, 30 * (2 ** (int) $job['attempts']))), 'payload_bytes' => strlen($encoded), 'completed_at' => in_array($status, ['completed', 'failed'], true) ? gmdate('Y-m-d H:i:s') : null];
         // A recovered worker owns a different lease and must not be overwritten.
         $previous_errors = $wpdb->suppress_errors(true);
         try { return 1 === $wpdb->update(Storage::table('jobs'), $changes, ['id' => (int) $job['id'], 'status' => 'running', 'locked_at' => $job['locked_at'], 'attempts' => $job['attempts']]); }

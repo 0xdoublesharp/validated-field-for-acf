@@ -14,10 +14,16 @@ final class Audit {
     private static function append(string $event, ?array $after, ?array $before, array $context): void {
         global $wpdb;
         $record = $after ?? $before;
+        $before_data = $before ? wp_json_encode($before) : 'null'; $after_data = $after ? wp_json_encode($after) : 'null';
+        $bytes = strlen((string) $before_data) + strlen((string) $after_data);
+        $admitted = Retention::admit_audit(get_current_user_id(), $bytes);
+        // Throwing rolls back the enclosing write; history is never silently skipped.
+        if (is_wp_error($admitted)) { throw new \RuntimeException('Audit capacity is full.'); }
         $previous_errors = $wpdb->suppress_errors(true);
-        try { $result = $wpdb->insert(Storage::table('audit'), ['record_id' => $record['id'], 'object_key' => $record['object'], 'actor_id' => get_current_user_id(), 'source' => substr(sanitize_key($context['source'] ?? 'records'), 0, 40), 'event' => $event, 'before_data' => $before ? wp_json_encode($before) : 'null', 'after_data' => $after ? wp_json_encode($after) : 'null', 'created_at' => gmdate('Y-m-d H:i:s')]); }
+        try { $result = $wpdb->insert(Storage::table('audit'), ['record_id' => $record['id'], 'object_key' => $record['object'], 'actor_id' => get_current_user_id(), 'source' => substr(sanitize_key($context['source'] ?? 'records'), 0, 40), 'event' => $event, 'before_data' => $before_data, 'after_data' => $after_data, 'created_at' => gmdate('Y-m-d H:i:s'), 'bytes' => $bytes]); }
         finally { $wpdb->suppress_errors($previous_errors); }
         if (!$result) { throw new \RuntimeException('Audit event could not be recorded.'); }
+        Retention::audit((int)$record['id']);
     }
 
     public static function history(int $id, array $args = []) {

@@ -23,7 +23,7 @@ final class Index {
     private static function state(string $object): array {
         global $wpdb;
         $revision = Schema::object($object)['_revision'] ?? '';
-        if (get_option('acf_vf_app_storage_version') !== '2') { return ['revision' => $revision, 'cursor' => 0, 'complete' => false]; }
+        if ((int) get_option('acf_vf_app_storage_version') < 2) { return ['revision' => $revision, 'cursor' => 0, 'complete' => false]; }
         $row = $wpdb->get_row($wpdb->prepare('SELECT schema_revision,value_text FROM ' . Storage::table('index') . ' WHERE object_key=%s AND record_id=0 AND field_key=%s', $object, '__state'), ARRAY_A);
         $state = $row ? json_decode($row['value_text'], true) : null;
         if (!$state || $row['schema_revision'] !== $revision) { return ['revision' => $revision, 'cursor' => 0, 'complete' => false]; }
