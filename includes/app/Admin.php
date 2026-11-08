@@ -90,7 +90,9 @@ final class Admin {
                 $metadata['field_types'] = [];
                 foreach (acf_get_field_types() as $type) { $metadata['field_types'][$type->name] = $type->label; }
                 return ['objects' => self::editor_objects(), 'metadata' => apply_filters('acf_vf/app/editor_metadata', $metadata)];
-            case 'save_object': return Schema::save_object($data['definition'] ?? []);
+            case 'save_object':
+                $saved = Schema::save_object($data['definition'] ?? []);
+                return is_wp_error($saved) ? $saved : Migrations::without_secrets($saved);
             case 'query':
                 $result = Query::run($object, $data['query'] ?? []);
                 if (is_wp_error($result)) { return $result; }

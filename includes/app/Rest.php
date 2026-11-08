@@ -57,9 +57,11 @@ final class Rest {
                     if ($admin && !current_user_can('manage_options')) { return self::error('forbidden', 'Configuration requires manage_options.', 403); }
                     return true;
                 },
-                'callback' => static function ($request) use ($handler) {
+                'callback' => static function ($request) use ($handler, $admin) {
                     $result = self::dispatch($handler, $request);
                     if (is_wp_error($result)) { return $result; }
+                    // Configuration responses, including provider-built ones, never carry delivery keys.
+                    if ($admin && is_array($result)) { $result = Migrations::without_secrets($result); }
                     $response = rest_ensure_response($result);
                     $response->header('Cache-Control', 'private, no-store, max-age=0');
                     $response->header('Vary', 'Cookie, Authorization');

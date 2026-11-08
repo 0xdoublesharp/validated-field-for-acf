@@ -8,7 +8,16 @@ final class Migrations {
 
     public static function export() {
         if (!current_user_can('manage_options')) { return Rest::error('forbidden', 'Configuration requires manage_options.', 403); }
-        return ['schema_version' => self::VERSION, 'objects' => Schema::objects()];
+        return ['schema_version' => self::VERSION, 'objects' => self::without_secrets(Schema::objects())];
+    }
+
+    /** Portable definitions and review diffs must not copy delivery credentials. */
+    public static function without_secrets(array $value): array {
+        if (($value['type'] ?? '') === 'webhook') { unset($value['secret']); }
+        foreach ($value as $key => $child) {
+            if (is_array($child)) { $value[$key] = self::without_secrets($child); }
+        }
+        return $value;
     }
 
     public static function definition(array $definition) {
@@ -80,6 +89,8 @@ final class Migrations {
     private static function field(array $field) {
         $allowed = ['key', 'name', 'label', 'type', 'required', 'readonly', 'choices', 'default_value', 'instructions', 'read_roles', 'write_roles', 'required_when', 'readonly_when', 'conditional_defaults', 'formula', 'rollup', 'unique', 'relationship', 'vf_rules', 'sub_field', 'sub_fields', 'layouts', 'min', 'max', 'step', 'minlength', 'maxlength', 'multiple', 'allow_null', 'return_format', 'post_type', 'taxonomy', 'filters', 'ui', 'ajax', 'rows', 'new_lines', 'format', 'display_format', 'save_format', 'wrapper', 'conditional_logic', 'function', 'pattern', 'message', 'mask', 'placeholder', 'prepend', 'append', 'business', 'mime_types', 'library', 'preview_size', 'button_label', 'collapsed', 'layout', 'parent', 'menu_order', 'show_in_graphql', 'graphql_field_name', 'graphql_type_name'];
         $allowed = array_merge($allowed, ['read_only', 'mask_autoclear', 'mask_placeholder', 'unique_statuses', 'drafts', 'field_type', 'save_terms', 'load_terms', 'add_term']);
+        $allowed[] = '_vf_php_signature';
+        if (isset($field['_vf_php_signature']) && (!is_string($field['_vf_php_signature']) || !preg_match('/^[a-f0-9]{64}$/D', $field['_vf_php_signature']))) { return Rest::error('configuration_validation', 'Invalid PHP approval signature.'); }
         $error = Rest::keys($field, $allowed);
         if ($error) { return $error; }
         foreach (['name', 'label', 'type', 'key', 'formula'] as $key) { if (isset($field[$key]) && !is_string($field[$key])) { return Rest::error('configuration_field', 'Field identifiers, labels and formulas must be strings.'); } }

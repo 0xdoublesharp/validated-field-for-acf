@@ -31,6 +31,7 @@ final class Schema {
     }
 
     public static function objects(): array {
+        self::upgrade_revisions();
         $objects = get_option('acf_vf_objects', []);
         if (!is_array($objects)) { return []; }
         foreach ($objects as &$definition) { if (is_array($definition) && !isset($definition['_revision'])) { $definition['_revision'] = self::revision($definition); } }
@@ -196,6 +197,11 @@ final class Schema {
         }
         // Keys are generated, not accepted from untrusted configuration imports.
         $field['key'] = $existing['key'] ?? self::stable_key('field', $path);
+        if ($field['type'] === 'validated_field') {
+            // Re-derive on every save so disabling PHP revokes approval instead of retaining it for re-enable.
+            $field = \ACF_VF_Validation::approve_php($field, $existing);
+            if (($field['function'] ?? '') === 'php' && !\ACF_VF_Validation::php_approved($field)) { return self::error('schema_php_authority', 'PHP validation requires approval by a code administrator.', 403); }
+        } else { unset($field['_vf_php_signature']); }
         foreach (['read_roles', 'write_roles'] as $setting) {
             if (isset($field[$setting]) && (!is_array($field[$setting]) || count(array_filter($field[$setting], 'is_string')) !== count($field[$setting]))) {
                 return self::error('schema_roles', 'Field roles must be an array of role names.');
@@ -284,6 +290,13 @@ final class Schema {
         return $proposed;
     }
 
+    /** Reuse local keys only for an export of this exact local object revision. */
+    public static function restore_export_secrets(array $definition): array {
+        $previous = self::objects()[$definition['slug'] ?? ''] ?? null;
+        if (!$previous || !is_string($definition['_revision'] ?? null) || !hash_equals($previous['_revision'], $definition['_revision'])) { return $definition; }
+        return self::restore_editor_secrets($definition, $previous);
+    }
+
     private static function write_locked(array $proposed, array $expected) {
         if (!current_user_can('manage_options')) { return self::error('forbidden', 'Configuration requires manage_options.', 403); }
         $normalized = [];
@@ -345,7 +358,20 @@ final class Schema {
         return self::hash($shape);
     }
 
-    private static function revision(array $definition): string { unset($definition['_revision']); return self::hash($definition); }
+    /** Site-keyed so an exported revision cannot verify guesses about omitted webhook keys offline. */
+    private static function revision(array $definition): string { unset($definition['_revision']); return hash_hmac('sha256', self::hash($definition), 'acf-vf-revision:' . wp_salt('auth')); }
+
+    /** Replace revisions stored by the earlier unkeyed scheme once. */
+    public static function upgrade_revisions(): void {
+        if (get_option('acf_vf_revision_scheme') === '2') { return; }
+        $stored = get_option('acf_vf_objects', []);
+        if (is_array($stored) && $stored) {
+            foreach ($stored as &$definition) { if (is_array($definition)) { $definition['_revision'] = self::revision($definition); } }
+            unset($definition);
+            update_option('acf_vf_objects', $stored, false);
+        }
+        update_option('acf_vf_revision_scheme', '2', false);
+    }
     private static function hash($value): string {
         $normalize = static function ($item) use (&$normalize) {
             if (!is_array($item)) { return $item; }

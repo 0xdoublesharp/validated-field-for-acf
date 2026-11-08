@@ -90,6 +90,7 @@ class acf_field_validated_field extends acf_field {
 	}
 
 	public function update_field( $field ) {
+		$field = ACF_VF_Validation::approve_php( $field, ACF_VF_Validation::stored_field( $field ) );
 		if ( isset( $field['sub_field'] ) && is_array( $field['sub_field'] ) ) {
 			$native = $this->native_field( $field );
 			$field['sub_field'] = apply_filters( 'acf/update_field/type=' . $native['type'], $native );

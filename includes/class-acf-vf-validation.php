@@ -2,6 +2,68 @@
 
 /** Extra validation for native ACF fields wrapped by Validated Field. */
 class ACF_VF_Validation {
+	public static function approve_php( $field, $previous = null ) {
+		if ( ( $field['function'] ?? '' ) !== 'php' ) { unset( $field['_vf_php_signature'] ); return $field; }
+		if ( current_user_can( 'edit_plugins' ) || current_user_can( 'install_plugins' ) ) {
+			$signature = self::php_signature( $field );
+			if ( $signature === null ) { unset( $field['_vf_php_signature'] ); }
+			else { $field['_vf_php_signature'] = $signature; }
+			return $field;
+		}
+		$stored = is_array( $previous ) && ( $previous['function'] ?? '' ) === 'php' ? ( $previous['_vf_php_signature'] ?? null ) : null;
+		if ( !is_string( $stored ) || !is_string( $field['_vf_php_signature'] ?? null ) || !hash_equals( $stored, $field['_vf_php_signature'] ) ) { unset( $field['_vf_php_signature'] ); }
+		return $field;
+	}
+
+	/** Stored settings of an ACF database field, read without ACF's request caches. */
+	public static function stored_field( $field ) {
+		$id = (int)( $field['ID'] ?? 0 );
+		if ( $id < 1 || get_post_type( $id ) !== 'acf-field' ) { return null; }
+		$stored = maybe_unserialize( get_post_field( 'post_content', $id, 'raw' ) );
+		return is_array( $stored ) ? $stored : null;
+	}
+
+	private static function php_signature( $field ) {
+		$code = str_replace( array( '%%squot%%', '%%dquot%%' ), array( "'", '"' ), $field['pattern'] ?? '' );
+		$native = $field['sub_field'] ?? array();
+		$rules = array(
+			'type' => $native['type'] ?? 'text',
+			'multiple' => self::is_true( $native['multiple'] ?? false ),
+			'required' => self::is_true( $field['required'] ?? false ),
+			'read_only' => self::is_true( $field['read_only'] ?? false ),
+			'choices' => $native['choices'] ?? array(),
+		);
+		foreach ( array( 'min', 'max', 'minlength', 'maxlength', 'taxonomy' ) as $key ) {
+			$value = $native[$key] ?? null;
+			$rules[$key] = $value === null || $value === false || $value === '' ? null : (string)$value;
+		}
+		$binding = array( $field['key'] ?? '', $field['_name'] ?? ( $field['name'] ?? '' ), $code, $rules );
+		$encoded = json_encode( $binding );
+		return $encoded === false ? null : hash_hmac( 'sha256', $encoded, self::approval_key() );
+	}
+
+	/**
+	 * Sites sharing salts still need this site's random approval key, and options access alone
+	 * still needs the configuration salt. Deleting the option revokes every approval.
+	 */
+	private static function approval_key() {
+		$site = get_option( 'acf_vf_php_approval_key' );
+		if ( !is_string( $site ) || !preg_match( '/^[a-f0-9]{64}$/D', $site ) ) {
+			$site = bin2hex( random_bytes( 32 ) );
+			if ( !add_option( 'acf_vf_php_approval_key', $site, '', false ) ) { $site = (string) get_option( 'acf_vf_php_approval_key' ); }
+		}
+		return hash_hmac( 'sha256', 'acf-vf-php-approval:' . get_current_blog_id() . ':' . $site, wp_salt( 'auth' ) );
+	}
+
+	public static function php_approved( $field ) {
+		if ( empty( $field['key'] ) ) { return false; }
+		// Validators registered in theme or plugin code are approved by that code; only code can add this filter.
+		if ( function_exists( 'apply_filters' ) && apply_filters( 'acf_vf/trusted_php_validator', false, $field ) === true ) { return true; }
+		if ( !is_string( $field['_vf_php_signature'] ?? null ) ) { return false; }
+		$expected = self::php_signature( $field );
+		return is_string( $expected ) && hash_equals( $expected, $field['_vf_php_signature'] );
+	}
+
 	private static function bounded_value( $value ) {
 		$pending = array( array( $value, 0 ) ); $nodes = 0; $bytes = 0;
 		while ( $pending ) {
@@ -358,6 +420,7 @@ class ACF_VF_Validation {
 					return $message;
 				}
 			} elseif ( $function === 'php' ) {
+				if ( !self::php_approved( $field ) ) { return __( 'PHP validation requires approval by a code administrator.', 'acf_vf' ); }
 				$inputs = array();
 				// Keep the legacy top-level aggregate entries alongside resolved leaves.
 				$submitted = isset( $_POST['acf'] ) ? (array) wp_unslash( $_POST['acf'] ) : array();
