@@ -334,7 +334,7 @@ final class Schema {
         $serialized = maybe_serialize($normalized);
         if ($stored === null) {
             $previous = $wpdb->suppress_errors(true);
-            $changed = $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,%s)", 'acf_vf_objects', $serialized, 'off'));
+            $changed = $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,%s)", 'acf_vf_objects', $serialized, 'no'));
             $wpdb->suppress_errors($previous);
         } elseif ($stored === $serialized) { return true; }
         else { $changed = $wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND BINARY option_value=BINARY %s", $serialized, 'acf_vf_objects', $stored)); }
@@ -347,12 +347,26 @@ final class Schema {
     }
 
     public static function compatible(array $before, array $after) {
+        $message = null;
         foreach ($before['fields'] ?? [] as $name => $field) {
-            if (!isset($after['fields'][$name]) || self::storage_shape($field) !== self::storage_shape($after['fields'][$name])) { return self::error('schema_migration_required', 'Removing fields or changing their storage shape requires a reviewed data migration.', 409); }
-            $next = $after['fields'][$name];
-            if ((!empty($field['formula']) || !empty($field['rollup'])) && empty($next['formula']) && empty($next['rollup'])) { return self::error('schema_migration_required', 'Removing a computation requires a reviewed data migration to replace its retained values.', 409); }
+            $next = $after['fields'][$name] ?? null;
+            if ($next === null || self::storage_shape($field) !== self::storage_shape($next)) {
+                $message = 'Removing fields or changing their storage shape requires a reviewed data migration.';
+                break;
+            }
+            if ((!empty($field['formula']) || !empty($field['rollup'])) && empty($next['formula']) && empty($next['rollup'])) {
+                $message = 'Removing a computation requires a reviewed data migration to replace its retained values.';
+                break;
+            }
         }
-        return true;
+        if ($message === null) { return true; }
+        global $wpdb;
+        $object = $before['slug'] ?? '';
+        if (isset($wpdb->posts) && is_string($object) && $object !== '') {
+            $id = $wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type=%s AND post_status <> 'auto-draft' LIMIT 1", $object));
+            if ($id === null && empty($wpdb->last_error)) { return true; }
+        }
+        return self::error('schema_migration_required', $message, 409);
     }
 
     public static function storage_shape(array $field): string {

@@ -21,7 +21,7 @@ final class Migrations {
     }
 
     public static function definition(array $definition) {
-        $error = Rest::keys($definition, ['slug', 'label', 'singular', 'public', 'existing', 'fields', 'access', 'rules', 'relationships', 'automation', 'layout', 'record_types', 'approvals', 'transitions', 'localization', 'unique_constraints', '_revision']);
+        $error = Rest::keys($definition, ['slug', 'label', 'singular', 'public', 'existing', 'fields', 'access', 'rules', 'relationships', 'automation', 'layout', 'record_types', 'approvals', 'transitions', 'localization', 'unique_constraints', 'allow_unique_probe', '_revision']);
         if ($error) { return $error; }
         if (isset($definition['unique_constraints'])) {
             if (!Rest::is_list($definition['unique_constraints']) || count($definition['unique_constraints']) > 32) { return Rest::error('configuration_unique', 'Unique constraints must be a list of at most 32 definitions.'); }
@@ -34,7 +34,7 @@ final class Migrations {
         foreach (['label', 'singular', 'slug'] as $key) {
             if (array_key_exists($key, $definition) && (!is_string($definition[$key]) || strlen($definition[$key]) > 200)) { return Rest::error('configuration_text', 'Object labels and identifiers must be bounded text.'); }
         }
-        foreach (['public', 'existing'] as $key) { if (array_key_exists($key, $definition) && !is_bool($definition[$key])) { return Rest::error('configuration_boolean', 'public and existing must be booleans.'); } }
+        foreach (['public', 'existing', 'allow_unique_probe'] as $key) { if (array_key_exists($key, $definition) && !is_bool($definition[$key])) { return Rest::error('configuration_boolean', $key . ' must be a boolean.'); } }
         foreach (['fields', 'access', 'rules', 'relationships', 'automation', 'layout', 'record_types', 'approvals', 'transitions'] as $key) { if (array_key_exists($key, $definition) && !is_array($definition[$key])) { return Rest::error('configuration_array', 'Configuration collections must be objects or arrays.'); } }
         foreach ($definition['access'] ?? [] as $access) {
             if (!is_array($access) || Rest::keys($access, ['scope', 'roles', 'owner_field', 'team_field', 'user_team_meta'])) { return Rest::error('configuration_access', 'Unknown access configuration.'); }
@@ -89,6 +89,8 @@ final class Migrations {
     private static function field(array $field) {
         $allowed = ['key', 'name', 'label', 'type', 'required', 'readonly', 'choices', 'default_value', 'instructions', 'read_roles', 'write_roles', 'required_when', 'readonly_when', 'conditional_defaults', 'formula', 'rollup', 'unique', 'relationship', 'vf_rules', 'sub_field', 'sub_fields', 'layouts', 'min', 'max', 'step', 'minlength', 'maxlength', 'multiple', 'allow_null', 'return_format', 'post_type', 'taxonomy', 'filters', 'ui', 'ajax', 'rows', 'new_lines', 'format', 'display_format', 'save_format', 'wrapper', 'conditional_logic', 'function', 'pattern', 'message', 'mask', 'placeholder', 'prepend', 'append', 'business', 'mime_types', 'library', 'preview_size', 'button_label', 'collapsed', 'layout', 'parent', 'menu_order', 'show_in_graphql', 'graphql_field_name', 'graphql_type_name'];
         $allowed = array_merge($allowed, ['read_only', 'mask_autoclear', 'mask_placeholder', 'unique_statuses', 'drafts', 'field_type', 'save_terms', 'load_terms', 'add_term']);
+        if (($field['type'] ?? '') === 'validated_field') { $allowed[] = 'unique_allow_non_admin'; }
+        if (array_key_exists('unique_allow_non_admin', $field) && !in_array($field['unique_allow_non_admin'], [true, false, 0, 1], true)) { return Rest::error('configuration_field', 'unique_allow_non_admin must be a boolean or 0/1.'); }
         $allowed[] = '_vf_php_signature';
         if (isset($field['_vf_php_signature']) && (!is_string($field['_vf_php_signature']) || !preg_match('/^[a-f0-9]{64}$/D', $field['_vf_php_signature']))) { return Rest::error('configuration_validation', 'Invalid PHP approval signature.'); }
         $error = Rest::keys($field, $allowed);

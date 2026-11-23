@@ -166,17 +166,29 @@ final class Records {
      * @return array|\WP_Error Record with id, object, title, status, version and fields.
      */
     public static function read(int $id) {
+        return self::read_record($id, null);
+    }
+
+    /** @internal Query brackets the scan with schema checks and primes its candidate caches. */
+    public static function read_for_query(int $id, string $object) {
+        return self::read_record($id, $object);
+    }
+
+    private static function read_record(int $id, ?string $queried_object) {
         if (!WorkBudget::consume()) { return WorkBudget::error(); }
-        self::flush_cache($id);
+        if ($queried_object === null) { self::flush_cache($id); }
         $post = get_post($id);
-        if (!$post || !Schema::object($post->post_type)) { return self::error('record_unavailable', 'Record is unavailable.', 404); }
-        $current = Schema::assert_current($post->post_type);
-        if (is_wp_error($current)) { return $current; }
+        if (!$post || ($queried_object !== null && $post->post_type !== $queried_object) || !Schema::object($post->post_type)) { return self::error('record_unavailable', 'Record is unavailable.', 404); }
+        if ($queried_object === null) {
+            $current = Schema::assert_current($post->post_type);
+            if (is_wp_error($current)) { return $current; }
+        }
         if (!Permissions::can('read', $post->post_type, $id)) { return self::error('record_unavailable', 'Record is unavailable.', 404); }
         if (!WorkBudget::consume(count(Schema::fields($post->post_type)))) { return WorkBudget::error(); }
         $record = self::raw($id);
         $record['fields'] = Permissions::readable_fields($record['object'], $id, $record['fields']);
         if (!WorkBudget::consume(0)) { return WorkBudget::error(); }
+        if ($queried_object !== null) { return $record; }
         $current = Schema::assert_current($record['object']);
         return is_wp_error($current) ? $current : $record;
     }

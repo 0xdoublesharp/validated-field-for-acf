@@ -92,9 +92,10 @@ final class Query {
             $query_args=apply_filters('acf_vf/app/query_post_args',$query_args,$object);
             if (!$consume()) { return self::work_capacity(); }
             $query=new \WP_Query($query_args);
+            if (function_exists('_prime_post_caches')) { _prime_post_caches($query->posts, false, true); }
             foreach ($query->posts as $id) {
                 if (!$consume()) { return self::work_capacity(); }
-                $record=Records::read((int)$id);
+                $record=Records::read_for_query((int)$id,$object);
                 if (is_wp_error($record) && $record->get_error_code() === 'request_work_capacity') { return $record; }
                 if (is_wp_error($record)) { continue; }
                 foreach ($used as $name=>$_) { if (isset($definitions[$name]) && !array_key_exists($name,$record['fields'])) { continue 2; } }

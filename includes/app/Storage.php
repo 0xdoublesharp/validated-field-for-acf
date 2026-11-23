@@ -1,6 +1,7 @@
 <?php
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
+require_once __DIR__ . '/WorkBudget.php';
 
 /** InnoDB transactions, savepoints and post-commit application events. */
 final class Storage {
@@ -9,6 +10,8 @@ final class Storage {
     private static $marks = [];
     private static $touched = [];
     private static $locks = [];
+    private static array $verified_engines = [];
+    private static ?string $engine_cache_request = null;
     public const VERSION = '3';
 
     public static function table(string $name): string {
@@ -18,6 +21,7 @@ final class Storage {
     }
 
     public static function install(): void {
+        self::reset_engine_cache();
         if (get_option('acf_vf_app_storage_version') === self::VERSION) { return; }
         global $wpdb;
         require_once ABSPATH . 'wp-admin/includes/upgrade.php';
@@ -96,6 +100,8 @@ final class Storage {
         update_option('acf_vf_app_storage_version', self::VERSION, false);
     }
 
+    public static function reset_engine_cache(): void { self::$verified_engines = []; }
+
     /**
      * Begin an InnoDB transaction, or a savepoint when nested; pair with commit()/rollback().
      *
@@ -104,10 +110,19 @@ final class Storage {
     public static function begin() {
         global $wpdb;
         if (!self::$depth) {
-            self::install();
-            foreach ([$wpdb->options, $wpdb->posts, $wpdb->postmeta, self::table('unique'), self::table('audit'), self::table('jobs'), self::table('index')] as $table) {
-                $engine = $wpdb->get_var($wpdb->prepare('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $table));
-                if (strtoupper((string) $engine) !== 'INNODB') { return new \WP_Error('storage_engine', 'Transactional InnoDB storage is required.', ['status' => 503]); }
+            $request = WorkBudget::request_id();
+            if (self::$engine_cache_request !== $request) {
+                self::reset_engine_cache();
+                self::$engine_cache_request = $request;
+            }
+            if (get_option('acf_vf_app_storage_version') !== self::VERSION) { self::install(); }
+            $domain = self::lock_domain() . '|' . self::VERSION;
+            if (!isset(self::$verified_engines[$domain])) {
+                foreach ([$wpdb->options, $wpdb->posts, $wpdb->postmeta, self::table('unique'), self::table('audit'), self::table('jobs'), self::table('index')] as $table) {
+                    $engine = $wpdb->get_var($wpdb->prepare('SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $table));
+                    if (strtoupper((string) $engine) !== 'INNODB') { return new \WP_Error('storage_engine', 'Transactional InnoDB storage is required.', ['status' => 503]); }
+                }
+                self::$verified_engines[$domain] = true;
             }
         }
         if (!self::$depth && $wpdb->query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED') === false) { return new \WP_Error('storage_isolation', 'Read-committed transactions are required.', ['status' => 503]); }

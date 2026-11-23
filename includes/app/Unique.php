@@ -78,8 +78,9 @@ final class Unique {
 
     /** Reject both existing and novel probes before consulting any other owner's values. */
     public static function authorize(string $object, array $values, int $id = 0) {
-        if (current_user_can('edit_plugins') || current_user_can('install_plugins')) { return true; }
+        if (current_user_can('manage_options') || current_user_can('edit_plugins') || current_user_can('install_plugins')) { return true; }
         $definition = Schema::object($object);
+        if (($definition['allow_unique_probe'] ?? false) === true) { return true; }
         $type = get_post_type_object($object);
         $all = empty($definition['native_table']) && ($definition['access']['read']['scope'] ?? 'all') === 'all' && $type && current_user_can($type->cap->read_private_posts) && current_user_can($type->cap->edit_private_posts) && current_user_can($type->cap->edit_others_posts) && Permissions::can('read', $object);
         // Primitive capabilities stand in for complete read scope. Deployments whose capability
@@ -130,7 +131,7 @@ final class Unique {
             if ($wpdb->insert(self::table(), ['key_hash'=>$hash, 'object_key'=>$object, 'record_id'=>$claim['record_id'], 'field_key'=>$claim['field_key'], 'created_at'=>current_time('mysql', true)]) === false) { return self::storage_error(); }
         }
         $name = 'acf_vf_unique_state_'.$object;
-        if ($wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'off') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value)", $name, $incoming)) === false) { return self::storage_error(); }
+        if ($wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'no') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value)", $name, $incoming)) === false) { return self::storage_error(); }
         return true;
     }
 

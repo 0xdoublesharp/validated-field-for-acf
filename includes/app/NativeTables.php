@@ -7,6 +7,9 @@ final class NativeTables {
     private static $hooked = [];
     private static array $observing = [];
     private static array $failed_observation = [];
+    private static ?string $failure_request = null;
+    private static array $column_records = [];
+    private static ?string $column_request = null;
     private static ?string $request_token = null;
     private const OBSERVATION = "_vf_native_observation";
     private const PENDING = "_vf_native_pending_";
@@ -27,6 +30,9 @@ final class NativeTables {
         add_action('transition_post_status',[self::class,'transitioning_post'],PHP_INT_MIN,3);
         add_action('wp_insert_post',[self::class,'inserted_post'],PHP_INT_MIN,3);
         add_action('deleted_post',[self::class,'deleted_post'],PHP_INT_MIN,2);
+        foreach (['record_saved','record_deleted'] as $event) {
+            add_action('acf_vf/app/'.$event,static function(array $record): void { unset(self::$column_records[$record['id']]); },PHP_INT_MIN);
+        }
         add_action('acf_vf/settings_sections',[self::class,'settings_section'],20);
         add_action('admin_init',static function (): void {
             if (($_GET['page']??'')!=='validated-field-tables' || !current_user_can('manage_options') || isset($_POST['vf_native_table_nonce'])) { return; }
@@ -53,6 +59,7 @@ final class NativeTables {
             $fields[$field['name']]=$field;
         }
         $definition=['slug'=>$object,'label'=>$type->labels->name,'singular'=>$type->labels->singular_name,'fields'=>$fields,'native_table'=>true,'existing'=>true,'public'=>(bool)$type->public,'access'=>[],'rules'=>[],'relationships'=>[],'automation'=>[],'layout'=>[],'record_types'=>[]];
+        if (($config['allow_unique_probe']??false)===true) { $definition['allow_unique_probe']=true; }
         $definition['_revision']=hash('sha256',(string)wp_json_encode(['observed-state-v1',$config,$fields]));
         return $definition;
     }
@@ -75,7 +82,7 @@ final class NativeTables {
      * @param string[] $keys One to 49 distinct top-level ACF field keys applicable to the post type.
      * @return array|\WP_Error Table definition; configuration requires manage_options.
      */
-    public static function configure(string $object,array $keys) {
+    public static function configure(string $object,array $keys,?bool $allow_unique_probe=null) {
         if (!current_user_can('manage_options')) { return Rest::error('native_tables_forbidden','Table configuration requires administrator access.',403); }
         $type=get_post_type_object($object);
         if (!$type || !$type->show_ui || in_array($object,['attachment','revision','nav_menu_item'],true) || isset(Schema::objects()[$object]) || !Rest::is_list($keys) || !$keys || count($keys)>49 || count(array_unique($keys,SORT_REGULAR))!==count($keys)) { return Rest::error('native_tables_definition','Select an existing post type and 1–49 distinct ACF fields.'); }
@@ -86,7 +93,9 @@ final class NativeTables {
             if (isset($names[$field['name']])) { return Rest::error('native_tables_field','Table field names must be unique.'); }
             $names[$field['name']]=true;
         }
-        $written=self::persist($object,['fields'=>$keys]);
+        $definition=['fields'=>$keys];
+        if ($allow_unique_probe!==null) { $definition['allow_unique_probe']=$allow_unique_probe; }
+        $written=self::persist($object,$definition);
         if (is_wp_error($written)) { return $written; }
         $definition=self::definition($object);
         if (!$definition) { return Rest::error('native_tables_definition','Field names must be unique.'); }
@@ -106,7 +115,13 @@ final class NativeTables {
             if ($wpdb->last_error) { throw new \RuntimeException('Native table configuration could not be read.'); }
             $stored=maybe_unserialize($raw);
             $stored=is_array($stored)?$stored:[]; $next=$stored;
-            if ($definition===null) { unset($next[$object]); } else { $next[$object]=$definition; }
+            if ($definition===null) { unset($next[$object]); }
+            else {
+                $allow_unique_probe=$definition['allow_unique_probe']??$stored[$object]['allow_unique_probe']??false;
+                unset($definition['allow_unique_probe']);
+                if ($allow_unique_probe===true) { $definition['allow_unique_probe']=true; }
+                $next[$object]=$definition;
+            }
             if ($next!==$stored) {
                 $lock=Storage::lock('index:'.$object); if (is_wp_error($lock)) { Storage::rollback(); return $lock; }
                 // Readiness belongs to this enablement lifecycle, even when A -> B
@@ -218,7 +233,7 @@ final class NativeTables {
         $lock=Storage::lock('index:'.$object); if (is_wp_error($lock)) { throw new \RuntimeException('Native index lock unavailable.'); }
         self::checked($wpdb->delete(Storage::table('index'),['object_key'=>$object,'record_id'=>0]));
         $name='acf_vf_native_generation_'.$object;
-        self::checked($wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'off') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value)",$name,bin2hex(random_bytes(16)))));
+        self::checked($wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,'no') ON DUPLICATE KEY UPDATE option_value=VALUES(option_value)",$name,bin2hex(random_bytes(16)))));
         wp_cache_delete($name,'options');
     }
     private static ?string $token_request = null;
@@ -263,10 +278,41 @@ final class NativeTables {
     private static function affected(array &$objects,$object): void {
         if (is_string($object) && self::enabled($object)) { $objects[$object]=true; }
     }
+
+    private static function reset_failures_for_request(): void {
+        $request=WorkBudget::request_id();
+        if (self::$failure_request!==$request) {
+            self::$failure_request=$request;
+            self::$failed_observation=[];
+        }
+    }
+
+    private static function invalidate_after_failure(string $object): void {
+        global $wpdb;
+        self::reset_failures_for_request();
+        self::$failed_observation[$object]=true;
+        try { $wpdb->delete(Storage::table('index'),['object_key'=>$object,'record_id'=>0]); }
+        catch (\Throwable $ignored) {} // The failed index remains ineligible in this request.
+    }
+
+    private static function hook_failure(\RuntimeException $error,?array $objects,?int $id=null): void {
+        // Application writes must roll back if their native projection cannot be maintained.
+        if (Storage::in_transaction() || Records::is_writing($id)) { throw $error; }
+        // When the initial post read fails, its configured type may be unknown.
+        foreach (array_unique($objects??array_keys(self::stored())) as $object) {
+            if (is_string($object) && self::enabled($object)) { self::invalidate_after_failure($object); }
+        }
+    }
+
+    private static function observe_hook(int $id,?array $before,?string $scope,bool $creation,array $post): void {
+        try { self::observe($id,$before,$scope,$creation,$post); }
+        catch (\RuntimeException $error) { self::hook_failure($error,[$before['post_type']??null,$post['post_type']??null],$id); }
+    }
     /** Reconcile durable state before a Records write acquires its exact-ID guard. */
     public static function observe(int $id,?array $before=null,?string $scope=null,bool $creation=false,?array $context=null): void {
         if ($id<1 || isset(self::$observing[$id])) { return; }
         global $wpdb;
+        unset(self::$column_records[$id]);
         self::$observing[$id]=true; $begun=false; $post=null; $affected=[];
         try {
             // Notification identities are recovery context, not a persisted-state
@@ -320,9 +366,7 @@ final class NativeTables {
                     // merely because both shared the failed fence's transaction.
                     // This remains part of an enclosing caller transaction, if any.
                     foreach (array_keys($affected) as $object) {
-                        self::$failed_observation[$object]=true;
-                        try { $wpdb->delete(Storage::table('index'),['object_key'=>$object,'record_id'=>0]); }
-                        catch (\Throwable $delete_error) {} // Preserve the original observation failure.
+                        self::invalidate_after_failure($object);
                     }
                 }
             }
@@ -348,52 +392,66 @@ final class NativeTables {
         } catch (\Throwable $error) { if ($active) { Storage::rollback(); } throw $error; }
     }
     public static function changing_post(int $id,array $data): void {
-        $before=self::raw_post($id); if (!$before) { return; }
-        $after=array_replace($before,$data); $objects=array_values(array_filter(array_unique([$before['post_type'],$after['post_type']]),[self::class,'enabled']));
-        if (!$objects) { return; }
-        self::observe($id,$before,$objects[0]);
-        if (Records::is_writing($id) || self::core($before)===self::core($after)) { return; }
-        self::fence($id,$objects,['kind'=>'core','expected'=>hash('sha256',(string)wp_json_encode(self::core($after)))]);
+        $objects=null;
+        try {
+            $before=self::raw_post($id); if (!$before) { return; }
+            $after=array_replace($before,$data); $objects=array_values(array_filter(array_unique([$before['post_type'],$after['post_type']]),[self::class,'enabled']));
+            if (!$objects) { return; }
+            self::observe($id,$before,$objects[0]);
+            if (Records::is_writing($id) || self::core($before)===self::core($after)) { return; }
+            self::fence($id,$objects,['kind'=>'core','expected'=>hash('sha256',(string)wp_json_encode(self::core($after)))]);
+        } catch (\RuntimeException $error) { self::hook_failure($error,$objects,$id); }
     }
     public static function inserting_post(array $data,array $postarr,array $original,bool $update): array {
         if ($update || !self::enabled((string)$data['post_type'])) { return $data; }
         global $wpdb;
         $object=(string)$data['post_type'];
-        $name='acf_vf_native_insert_'.$object.'_'.bin2hex(random_bytes(12));
-        $begin=Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native insert barrier unavailable.'); } $active=true;
+        $active=false;
         try {
+            $name='acf_vf_native_insert_'.$object.'_'.bin2hex(random_bytes(12));
+            $begin=Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native insert barrier unavailable.'); } $active=true;
             $count=(int)$wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM {$wpdb->options} WHERE option_name LIKE %s",$wpdb->esc_like('acf_vf_native_insert_'.$object.'_').'%'));
             if ($wpdb->last_error || $count>=100) { throw new \RuntimeException('Native insert capacity exceeded.'); }
             self::invalidate($object);
-            self::checked($wpdb->insert($wpdb->options,['option_name'=>$name,'option_value'=>wp_json_encode(['token'=>self::token(),'expected'=>hash('sha256',(string)wp_json_encode(self::core(wp_unslash($data))))]),'autoload'=>'off']));
+            self::checked($wpdb->insert($wpdb->options,['option_name'=>$name,'option_value'=>wp_json_encode(['token'=>self::token(),'expected'=>hash('sha256',(string)wp_json_encode(self::core(wp_unslash($data))))]),'autoload'=>'no']));
             self::commit($active);
-        } catch (\Throwable $error) { if ($active) { Storage::rollback(); } throw $error; }
+        } catch (\Throwable $error) {
+            if ($active) { Storage::rollback(); }
+            if (!$error instanceof \RuntimeException) { throw $error; }
+            self::hook_failure($error,[$object]);
+        }
         return $data;
     }
     public static function changing_meta($meta_id,$id,$key,$value=null): void {
         if (!(int)$id) { self::bulk_metadata((string)$key, false); return; }
-        $id=(int)$id; $post=self::raw_post($id);
-        if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
-        self::observe($id);
-        if (!Records::is_writing($id)) { self::fence($id,[$post['post_type']],['kind'=>'meta','event'=>current_filter(),'key'=>$key,'value'=>hash('sha256',serialize($value))]); }
+        $id=(int)$id; $post=null;
+        try {
+            $post=self::raw_post($id);
+            if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
+            self::observe($id);
+            if (!Records::is_writing($id)) { self::fence($id,[$post['post_type']],['kind'=>'meta','event'=>current_filter(),'key'=>$key,'value'=>hash('sha256',serialize($value))]); }
+        } catch (\RuntimeException $error) { self::hook_failure($error,$post?[$post['post_type']]:null,$id); }
     }
     public static function changed_meta($meta_id,$id,$key,$value=null): void {
         if (!(int)$id) { self::bulk_metadata((string)$key, true); return; }
-        $id=(int)$id; $post=self::raw_post($id);
-        if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
-        self::observe($id);
         global $wpdb;
-        $event=['added_post_meta'=>'add_post_meta','updated_post_meta'=>'update_post_meta','deleted_post_meta'=>'delete_post_meta'][current_filter()]??'';
-        $rows=$wpdb->get_results($wpdb->prepare("SELECT meta_id,meta_value FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s LIMIT 101",$id,self::PENDING.$post['post_type']),ARRAY_A);
-        if ($wpdb->last_error || count($rows)>100) { throw new \RuntimeException('Native pending capacity exceeded.'); }
-        // The post-action acknowledges completion, including a genuine SQL no-op.
-        foreach (array_reverse($rows) as $row) { $intent=json_decode($row['meta_value'],true); if (($intent['token']??'')===self::$request_token && ($intent['event']??'')===$event && ($intent['key']??'')===$key && ($intent['value']??'')===hash('sha256',serialize($value))) { self::checked($wpdb->delete($wpdb->postmeta,['meta_id'=>$row['meta_id']])); break; } }
-        wp_cache_delete($id,'post_meta');
+        $id=(int)$id; $post=null;
+        try {
+            $post=self::raw_post($id);
+            if (!$post || !self::enabled($post['post_type']) || !self::selected($post['post_type'],(string)$key)) { return; }
+            self::observe($id);
+            $event=['added_post_meta'=>'add_post_meta','updated_post_meta'=>'update_post_meta','deleted_post_meta'=>'delete_post_meta'][current_filter()]??'';
+            $rows=$wpdb->get_results($wpdb->prepare("SELECT meta_id,meta_value FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key=%s LIMIT 101",$id,self::PENDING.$post['post_type']),ARRAY_A);
+            if ($wpdb->last_error || count($rows)>100) { throw new \RuntimeException('Native pending capacity exceeded.'); }
+            // The post-action acknowledges completion, including a genuine SQL no-op.
+            foreach (array_reverse($rows) as $row) { $intent=json_decode($row['meta_value'],true); if (($intent['token']??'')===self::$request_token && ($intent['event']??'')===$event && ($intent['key']??'')===$key && ($intent['value']??'')===hash('sha256',serialize($value))) { self::checked($wpdb->delete($wpdb->postmeta,['meta_id'=>$row['meta_id']])); break; } }
+            wp_cache_delete($id,'post_meta');
+        } catch (\RuntimeException $error) { self::hook_failure($error,$post?[$post['post_type']]:null,$id); }
     }
     public static function cleaned_terms($ids,string $object): void {
         $ids=(array)$ids;
         if (count($ids)>50) { return; } // Public single-record core mutations use one ID.
-        foreach ($ids as $id) { self::observe((int)$id,null,null,false,['post_type'=>$object]); }
+        foreach ($ids as $id) { self::observe_hook((int)$id,null,null,false,['post_type'=>$object]); }
     }
 
     /** A delete-all notification has no record ID; fence every selected native projection. */
@@ -411,22 +469,28 @@ final class NativeTables {
             }
         }
         if (!$objects) { if (!$completed) { self::$bulk_meta[$key][] = []; } return; }
-        $begin = Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native bulk metadata barrier unavailable.'); }
-        $active = true;
+        $active = false;
         try {
+            $begin = Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native bulk metadata barrier unavailable.'); }
+            $active = true;
             foreach ($objects as $object=>$name) {
                 self::invalidate($object);
                 if ($completed) { self::checked($wpdb->delete($wpdb->options, ['option_name'=>$name])); }
-                else { self::checked($wpdb->insert($wpdb->options, ['option_name'=>$name,'option_value'=>wp_json_encode(['token'=>self::token(),'kind'=>'bulk_metadata']),'autoload'=>'off'])); }
+                else { self::checked($wpdb->insert($wpdb->options, ['option_name'=>$name,'option_value'=>wp_json_encode(['token'=>self::token(),'kind'=>'bulk_metadata']),'autoload'=>'no'])); }
             }
             self::commit($active);
             if (!$completed) { self::$bulk_meta[$key][] = $objects; }
-        } catch (\Throwable $error) { if ($active) { Storage::rollback(); } throw $error; }
+        } catch (\Throwable $error) {
+            if ($active) { Storage::rollback(); }
+            if (!$error instanceof \RuntimeException) { throw $error; }
+            self::hook_failure($error,array_keys($objects));
+            if (!$completed) { self::$bulk_meta[$key][] = []; }
+        }
     }
-    public static function cleaned_post(int $id,$post): void { self::observe($id,null,null,false,(array)$post); }
+    public static function cleaned_post(int $id,$post): void { self::observe_hook($id,null,null,false,(array)$post); }
     public static function transitioning_post(string $new,string $old,$post): void {
         $before=(array)$post; $before['post_status']=$old;
-        self::observe((int)$post->ID,$old==='new'?null:$before,null,$old==='new',(array)$post);
+        self::observe_hook((int)$post->ID,$old==='new'?null:$before,null,$old==='new',(array)$post);
     }
     public static function updated_post(int $id,$after,$before): void { self::changed_post($id,$after,$before); }
     /**
@@ -440,24 +504,33 @@ final class NativeTables {
      */
     public static function changed_post(int $id,$after,$before): void {
         $objects=array_values(array_filter([(string)$before->post_type,(string)$after->post_type],[self::class,'enabled']));
-        if ($objects) { self::observe($id,(array)$before,self::enabled((string)$after->post_type)?(string)$after->post_type:$objects[0],false,(array)$after); }
+        if ($objects) { self::observe_hook($id,(array)$before,self::enabled((string)$after->post_type)?(string)$after->post_type:$objects[0],false,(array)$after); }
     }
     public static function inserted_post(int $id,$post,bool $update): void {
-        self::observe($id,null,null,!$update,(array)$post);
-        if ($update || !self::enabled((string)$post->post_type)) { return; }
         global $wpdb;
-        $rows=$wpdb->get_results($wpdb->prepare("SELECT option_name,option_value FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 101",$wpdb->esc_like('acf_vf_native_insert_'.$post->post_type.'_').'%'),ARRAY_A);
-        if ($wpdb->last_error || count($rows)>100) { throw new \RuntimeException('Native insert capacity exceeded.'); }
-        foreach ($rows as $row) { $intent=json_decode($row['option_value'],true); if (($intent['token']??'')===self::$request_token && ($intent['expected']??'')===hash('sha256',(string)wp_json_encode(self::core((array)$post)))) { self::checked($wpdb->delete($wpdb->options,['option_name'=>$row['option_name']])); break; } }
+        try {
+            self::observe($id,null,null,!$update,(array)$post);
+            if ($update || !self::enabled((string)$post->post_type)) { return; }
+            $rows=$wpdb->get_results($wpdb->prepare("SELECT option_name,option_value FROM {$wpdb->options} WHERE option_name LIKE %s LIMIT 101",$wpdb->esc_like('acf_vf_native_insert_'.$post->post_type.'_').'%'),ARRAY_A);
+            if ($wpdb->last_error || count($rows)>100) { throw new \RuntimeException('Native insert capacity exceeded.'); }
+            foreach ($rows as $row) { $intent=json_decode($row['option_value'],true); if (($intent['token']??'')===self::$request_token && ($intent['expected']??'')===hash('sha256',(string)wp_json_encode(self::core((array)$post)))) { self::checked($wpdb->delete($wpdb->options,['option_name'=>$row['option_name']])); break; } }
+        } catch (\RuntimeException $error) { self::hook_failure($error,[(string)$post->post_type],$id); }
     }
     public static function deleting_post(int $id,$post): void {
-        if (!Records::is_writing($id) && self::enabled((string)$post->post_type)) { self::observe($id,null,null,false,(array)$post); self::fence($id,[(string)$post->post_type],['kind'=>'delete']); }
+        $object=(string)$post->post_type;
+        if (Records::is_writing($id) || !self::enabled($object)) { return; }
+        try {
+            self::observe($id,null,null,false,(array)$post);
+            self::fence($id,[$object],['kind'=>'delete']);
+        } catch (\RuntimeException $error) { self::hook_failure($error,[$object],$id); }
     }
     public static function deleted_post(int $id,$post): void {
+        unset(self::$column_records[$id]);
         if (self::enabled((string)$post->post_type)) {
             global $wpdb;
-            $begin=Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native deletion barrier unavailable.'); } $active=true;
+            $active=false;
             try {
+                $begin=Storage::begin(); if (is_wp_error($begin)) { throw new \RuntimeException('Native deletion barrier unavailable.'); } $active=true;
                 // Core snapshots metadata IDs before deleting them. Observing a
                 // selected-meta deletion can replace the journal with a newer ID.
                 self::checked($wpdb->query($wpdb->prepare("DELETE FROM {$wpdb->postmeta} WHERE post_id=%d AND (meta_key=%s OR meta_key LIKE %s)",$id,self::OBSERVATION,$wpdb->esc_like(self::PENDING).'%')));
@@ -465,7 +538,11 @@ final class NativeTables {
                 if (!Records::is_writing($id)) { self::invalidate((string)$post->post_type); }
                 self::commit($active);
             }
-            catch (\Throwable $error) { if ($active) { Storage::rollback(); } throw $error; }
+            catch (\Throwable $error) {
+                if ($active) { Storage::rollback(); }
+                if (!$error instanceof \RuntimeException) { throw $error; }
+                self::hook_failure($error,[(string)$post->post_type],$id);
+            }
         }
     }
     /** O(1) object eligibility checks; pending records are reconciled only by backfill. */
@@ -477,6 +554,7 @@ final class NativeTables {
     }
     public static function pending(string $object): bool {
         global $wpdb;
+        self::reset_failures_for_request();
         if (isset(self::$failed_observation[$object])) { return true; }
         $meta=$wpdb->get_var($wpdb->prepare("SELECT meta_id FROM {$wpdb->postmeta} WHERE meta_key=%s LIMIT 1",self::PENDING.$object));
         if ($wpdb->last_error) { return true; }
@@ -519,8 +597,13 @@ final class NativeTables {
         });
         add_action('manage_'.$object.'_posts_custom_column',static function($key,$id) use($object): void {
             if (strpos((string)$key,'vf_')!==0) { return; }
-            $columns=Lists::columns($object); $record=Records::read((int)$id);
-            if (is_wp_error($columns) || is_wp_error($record)) { return; }
+            $columns=Lists::columns($object);
+            if (is_wp_error($columns)) { return; }
+            $request=WorkBudget::request_id();
+            if (self::$column_request!==$request) { self::$column_request=$request; self::$column_records=[]; }
+            $id=(int)$id; $actor=get_current_user_id();
+            $record=self::$column_records[$id][$actor]??=Records::read($id);
+            if (is_wp_error($record) || $record['object']!==$object) { return; }
             foreach ($columns as $column) { if ($key==='vf_'.$column['field']) { echo Lists::format_value($object,$record,$column,true); } }
         },10,2);
         add_action('restrict_manage_posts',static function($type,$which) use($object): void {
@@ -556,7 +639,8 @@ final class NativeTables {
         if (isset($_POST['vf_native_table_nonce'])) {
             check_admin_referer('vf_native_tables','vf_native_table_nonce');
             $keys=isset($_POST['fields']) && is_array($_POST['fields'])?wp_unslash($_POST['fields']):[];
-            $result=!isset($types[$object])?Rest::error('native_tables_definition','Choose an available post type.'):(isset($_POST['remove'])?self::remove($object):self::configure($object,$keys));
+            $allow_unique_probe=($_POST['allow_unique_probe']??'')==='1';
+            $result=!isset($types[$object])?Rest::error('native_tables_definition','Choose an available post type.'):(isset($_POST['remove'])?self::remove($object):self::configure($object,$keys,$allow_unique_probe));
             $notice=is_wp_error($result)?$result->get_error_message():__('Table settings saved.','validated-field-for-acf');
         }
         if (!isset($types[$object])) { $object=(string)array_key_first($types); }
@@ -566,7 +650,7 @@ final class NativeTables {
         foreach ($types as $slug=>$type) { echo '<option value="'.esc_attr($slug).'"'.selected($object,$slug,false).'>'.esc_html($type->labels->name).'</option>'; }
         echo '</select> '; submit_button(__('Choose post type','validated-field-for-acf'),'secondary','choose',false); echo '</p></form>';
         if ($object!=='') {
-            $fields=self::eligible_fields($object); $selected=self::stored()[$object]['fields']??[];
+            $fields=self::eligible_fields($object); $config=self::stored()[$object]??[]; $selected=$config['fields']??[];
             echo '<form method="post"><input type="hidden" name="object" value="'.esc_attr($object).'">'; wp_nonce_field('vf_native_tables','vf_native_table_nonce');
             echo '<fieldset><legend><strong>'.esc_html__('Fields for this table','validated-field-for-acf').'</strong></legend>';
             foreach ($fields as $key=>$field) {
@@ -574,6 +658,9 @@ final class NativeTables {
             }
             if (!$fields) { echo '<p>'.esc_html__('No eligible ACF fields. Add a field group whose location applies to this entire post type.','validated-field-for-acf').'</p>'; }
             echo '</fieldset>';
+            if ($fields) {
+                echo '<p><label><input type="checkbox" name="allow_unique_probe" value="1"'.checked(($config['allow_unique_probe']??false)===true,true,false).'> '.esc_html__('Allow non-administrators to check unique values across all records','validated-field-for-acf').'</label></p>';
+            }
             if ($fields) { submit_button(__('Save table','validated-field-for-acf'),'primary','save',false); echo ' '; }
             if (self::enabled($object)) { submit_button(__('Remove table settings','validated-field-for-acf'),'secondary','remove',false); }
             echo '</form>';
