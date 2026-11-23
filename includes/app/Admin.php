@@ -7,6 +7,16 @@ final class Admin {
     public static function boot(): void {
         ConfigurationPage::boot();
         add_action('admin_menu', static function (): void {
+            if (!current_user_can('manage_options')) {
+                $can_read = false;
+                foreach (array_keys(Schema::table_objects()) as $slug) {
+                    if (Permissions::can('read', $slug)) {
+                        $can_read = true;
+                        break;
+                    }
+                }
+                if (!$can_read) { return; }
+            }
             add_menu_page('Validated Field', 'Validated Field', 'read', 'validated-field-workspace', [__CLASS__, 'render'], 'dashicons-database', 26);
         });
         add_action('admin_enqueue_scripts', [__CLASS__, 'assets']);

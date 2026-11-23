@@ -10,7 +10,7 @@ class NativeFields {
 
     public static function boot(): void {
         if (self::$booted) { return; } self::$booted=true;
-        add_action('acf/render_field_settings',array(__CLASS__,'settings'),30);
+        add_action('acf/render_field_advanced_settings',array(__CLASS__,'settings'),30);
         add_filter('acf/update_field',array(__CLASS__,'normalize'),20);
         add_filter('acf/validate_value',array(__CLASS__,'validate_native_value'),25,4);
         add_action('acf/validate_save_post',array(__CLASS__,'validate_native_form'),25);
@@ -29,13 +29,22 @@ class NativeFields {
     }
 
     public static function settings(array $field): void {
-        if (!function_exists('acf_render_field_setting')) { return; }
-        $labels=array('vf_rules'=>'Validation rules','required_when'=>'Required when','readonly_when'=>'Read only when','conditional_defaults'=>'Conditional defaults','business'=>'Business preset and constraints');
+        if (!function_exists('acf_render_field_setting') || in_array($field['type'] ?? '', ['tab','message','accordion','clone'], true)) { return; }
+        $labels = [
+            'vf_rules' => __('Validation rules', 'validated-field-for-acf'),
+            'required_when' => __('Required when', 'validated-field-for-acf'),
+            'readonly_when' => __('Read only when', 'validated-field-for-acf'),
+            'conditional_defaults' => __('Conditional defaults', 'validated-field-for-acf'),
+            'business' => __('Business preset and constraints', 'validated-field-for-acf'),
+        ];
+        echo '<details><summary>' . esc_html__('Validated Field JSON rules (advanced)', 'validated-field-for-acf') . '</summary>';
+        echo '<p>' . esc_html__('Edit the rules as JSON or use the Validated Field workspace. Invalid conditions block saves.', 'validated-field-for-acf') . '</p>';
         foreach (self::JSON_SETTINGS as $key) {
-            $display=$field;
-            if (isset($display[$key]) && is_array($display[$key])) { $display[$key]=wp_json_encode($display[$key],JSON_PRETTY_PRINT|JSON_UNESCAPED_SLASHES); }
-            acf_render_field_setting($display,array('label'=>$labels[$key],'instructions'=>'Optional JSON. Configure visual rules in the Business applications editor. Invalid conditions block saves.','name'=>$key,'type'=>'textarea','rows'=>3));
+            $display = $field;
+            if (isset($display[$key]) && is_array($display[$key])) { $display[$key] = wp_json_encode($display[$key], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES); }
+            acf_render_field_setting($display, ['label' => $labels[$key], 'name' => $key, 'type' => 'textarea', 'rows' => 3]);
         }
+        echo '</details>';
         do_action('acf_vf/app/native_settings',$field);
     }
 

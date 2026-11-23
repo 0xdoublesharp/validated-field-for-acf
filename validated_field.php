@@ -1,13 +1,15 @@
 <?php
 /*
 Plugin Name: Advanced Custom Fields: Validated Field
-Plugin URI: http://www.doublesharp.com/
-Description: Server side validation, input masking and more for Advanced Custom Fields
+Plugin URI: https://validated-field.doublesharp.com/
+Description: Server-side validation, input masks, and a records workspace for Advanced Custom Fields.
 Author: Justin Silver
 Version: 2.0.0
 Requires at least: 6.0
 Requires PHP: 8.0
-Author URI: http://doublesharp.com/
+Author URI: https://doublesharp.com/
+License: GPL-2.0-or-later
+Text Domain: validated-field-for-acf
 */
 
 if ( ! defined( 'ACF_VF_VERSION' ) )
@@ -40,7 +42,7 @@ function include_acf_validated_field() {
 add_action( 'acf/include_field_types', 'include_acf_validated_field' );
 
 function load_textdomain_acf_vf() {
-	load_plugin_textdomain( 'acf_vf', false, dirname( plugin_basename( __FILE__ ) ) . '/languages/' );
+	load_plugin_textdomain( 'validated-field-for-acf', false, dirname( plugin_basename( __FILE__ ) ) . '/languages/' );
 }
 add_action( 'init', 'load_textdomain_acf_vf', 5 );
 

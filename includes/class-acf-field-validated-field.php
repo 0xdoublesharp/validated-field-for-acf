@@ -6,15 +6,16 @@ if ( ! defined( 'ABSPATH' ) ) { exit; }
 class acf_field_validated_field extends acf_field {
 	public function initialize() {
 		$this->name = 'validated_field';
-		$this->label = __( 'Validated Field', 'acf_vf' );
+		$this->label = __( 'Validated Field', 'validated-field-for-acf' );
 		$this->category = 'basic';
-		$this->description = __( 'A native ACF input with additional validation rules.', 'acf_vf' );
+		$this->description = __( 'A native ACF input with additional validation rules.', 'validated-field-for-acf' );
 		$this->supports['escaping_html'] = true;
 		$this->defaults = array(
 			'sub_field' => array( 'type' => 'text' ), 'read_only' => false,
 			'mask' => '', 'mask_autoclear' => true, 'mask_placeholder' => '_',
-			'function' => 'none', 'pattern' => '', 'message' => __( 'Validation failed.', 'acf_vf' ),
-			'unique' => 'non-unique', 'unique_statuses' => apply_filters( 'acf_vf/unique_statuses', array( 'publish', 'future' ) ), 'drafts' => true,
+			'function' => 'none', 'pattern' => '', 'message' => __( 'Validation failed.', 'validated-field-for-acf' ),
+			'unique' => 'non-unique', 'unique_allow_non_admin' => false,
+			'unique_statuses' => apply_filters( 'acf_vf/unique_statuses', array( 'publish', 'future' ) ), 'drafts' => true,
 		);
 		add_action( 'wp_ajax_acf_vf_sub_settings', array( $this, 'ajax_sub_settings' ) );
 		add_action( 'admin_init', array( $this, 'register_options' ) );
@@ -112,7 +113,7 @@ class acf_field_validated_field extends acf_field {
 		) );
 		if ( $native['data']['vf-readonly'] ) {
 			$native['readonly'] = 1;
-			$native['instructions'] = trim( ( $field['instructions'] ?? '' ) . ' ' . __( 'Read only', 'acf_vf' ) );
+			$native['instructions'] = trim( ( $field['instructions'] ?? '' ) . ' ' . __( 'Read only', 'validated-field-for-acf' ) );
 		}
 		return apply_filters( 'acf/prepare_field/type=' . $native['type'], $native );
 	}
@@ -196,7 +197,7 @@ class acf_field_validated_field extends acf_field {
 			foreach ( array( 'validated_field', 'tab', 'message', 'accordion', 'clone', 'group', 'repeater', 'flexible_content' ) as $type ) { unset( $types[$type] ); }
 		}
 		unset( $types );
-		acf_render_field_setting( $field, array( 'label' => __( 'Input type', 'acf_vf' ), 'type' => 'select', 'name' => 'sub_field_type', 'value' => $field['sub_field']['type'] ?? 'text', 'choices' => $choices, 'wrapper' => array( 'class' => 'vf-type-setting' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Input type', 'validated-field-for-acf' ), 'type' => 'select', 'name' => 'sub_field_type', 'value' => $field['sub_field']['type'] ?? 'text', 'choices' => $choices, 'wrapper' => array( 'class' => 'vf-type-setting' ) ) );
 		echo '<div class="vf-native-settings" data-prefix="' . esc_attr( $field['prefix'] ) . '" data-key="' . esc_attr( $field['key'] ) . '">';
 		$this->render_native_settings( $field );
 		echo '</div>';
@@ -211,18 +212,19 @@ class acf_field_validated_field extends acf_field {
 		}
 	}
 	public function render_field_validation_settings( $field ) {
-		acf_render_field_setting( $field, array( 'label' => __( 'Validator', 'acf_vf' ), 'name' => 'function', 'type' => 'select', 'choices' => array( 'none' => __( 'None', 'acf_vf' ), 'regex' => __( 'Regular expression', 'acf_vf' ), 'php' => __( 'PHP', 'acf_vf' ) ) ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Validation rule', 'acf_vf' ), 'name' => 'pattern', 'type' => 'textarea', 'rows' => 6, 'instructions' => __( 'Regex without delimiters. PHP is trusted administrator code. Variables: $value, $prev_value, $inputs, $post_id, $post_type, $this_key, $name, $message. Return false or an error message to reject.', 'acf_vf' ), 'wrapper' => array( 'class' => 'vf-rule-setting' ) ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Error message', 'acf_vf' ), 'name' => 'message', 'type' => 'text' ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Unique value', 'acf_vf' ), 'name' => 'unique', 'type' => 'select', 'choices' => array( 'non-unique' => __( 'Not unique', 'acf_vf' ), 'global' => __( 'All fields and posts', 'acf_vf' ), 'post_type' => __( 'All fields of this post type', 'acf_vf' ), 'post_key' => __( 'This field across this post type', 'acf_vf' ), 'this_post' => __( 'All fields in this record', 'acf_vf' ), 'this_post_key' => __( 'This field in this record', 'acf_vf' ) ) ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Unique post statuses', 'acf_vf' ), 'name' => 'unique_statuses', 'type' => 'checkbox', 'choices' => get_post_statuses() ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Validate drafts', 'acf_vf' ), 'name' => 'drafts', 'type' => 'true_false', 'ui' => 1, 'instructions' => __( 'Global draft validation, when enabled, takes precedence.', 'acf_vf' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Validator', 'validated-field-for-acf' ), 'name' => 'function', 'type' => 'select', 'choices' => array( 'none' => __( 'None', 'validated-field-for-acf' ), 'regex' => __( 'Regular expression', 'validated-field-for-acf' ), 'php' => __( 'PHP', 'validated-field-for-acf' ) ), 'wrapper' => array( 'class' => 'vf-validator-setting' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Validation rule', 'validated-field-for-acf' ), 'name' => 'pattern', 'type' => 'textarea', 'rows' => 6, 'instructions' => __( 'Enter a regex without delimiters. For example, ^[0-9]{5}$ accepts five digits and ^[A-Z]{2}$ accepts two uppercase letters. PHP is trusted administrator code. Available variables are $value, $prev_value, $inputs, $post_id, $post_type, $this_key, $name, and $message. Return false or an error message to reject.', 'validated-field-for-acf' ), 'wrapper' => array( 'class' => 'vf-rule-setting' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Error message', 'validated-field-for-acf' ), 'name' => 'message', 'type' => 'text' ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Unique value', 'validated-field-for-acf' ), 'name' => 'unique', 'type' => 'select', 'choices' => array( 'non-unique' => __( 'Not unique', 'validated-field-for-acf' ), 'global' => __( 'All fields and posts', 'validated-field-for-acf' ), 'post_type' => __( 'All fields of this post type', 'validated-field-for-acf' ), 'post_key' => __( 'This field across this post type', 'validated-field-for-acf' ), 'this_post' => __( 'All fields in this record', 'validated-field-for-acf' ), 'this_post_key' => __( 'This field in this record', 'validated-field-for-acf' ) ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Allow cross-record uniqueness for non-admins', 'validated-field-for-acf' ), 'name' => 'unique_allow_non_admin', 'type' => 'true_false', 'ui' => 1, 'instructions' => __( 'Allow Editors, Authors, and front-end form submissions to check uniqueness across records. This can reveal whether a value already exists.', 'validated-field-for-acf' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Unique post statuses', 'validated-field-for-acf' ), 'name' => 'unique_statuses', 'type' => 'checkbox', 'choices' => get_post_statuses() ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Validate drafts', 'validated-field-for-acf' ), 'name' => 'drafts', 'type' => 'true_false', 'ui' => 1, 'instructions' => __( 'Global draft validation, when enabled, takes precedence.', 'validated-field-for-acf' ) ) );
 	}
 	public function render_field_presentation_settings( $field ) {
-		acf_render_field_setting( $field, array( 'label' => __( 'Read only', 'acf_vf' ), 'name' => 'read_only', 'type' => 'true_false', 'ui' => 1 ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Input mask', 'acf_vf' ), 'name' => 'mask', 'type' => 'text', 'instructions' => __( '9: digit, a: letter, *: letter or digit. For text, email, URL and telephone inputs.', 'acf_vf' ) ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Mask placeholder', 'acf_vf' ), 'name' => 'mask_placeholder', 'type' => 'text' ) );
-		acf_render_field_setting( $field, array( 'label' => __( 'Clear incomplete mask', 'acf_vf' ), 'name' => 'mask_autoclear', 'type' => 'true_false', 'ui' => 1 ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Read only', 'validated-field-for-acf' ), 'name' => 'read_only', 'type' => 'true_false', 'ui' => 1 ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Input mask', 'validated-field-for-acf' ), 'name' => 'mask', 'type' => 'text', 'instructions' => __( '9: digit, a: letter, *: letter or digit. For text, email, URL and telephone inputs.', 'validated-field-for-acf' ) ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Mask placeholder', 'validated-field-for-acf' ), 'name' => 'mask_placeholder', 'type' => 'text' ) );
+		acf_render_field_setting( $field, array( 'label' => __( 'Clear incomplete mask', 'validated-field-for-acf' ), 'name' => 'mask_autoclear', 'type' => 'true_false', 'ui' => 1 ) );
 	}
 	public function ajax_sub_settings() {
 		check_ajax_referer( 'acf-vf-settings', 'nonce' );
@@ -255,16 +257,16 @@ class acf_field_validated_field extends acf_field {
 			register_setting( 'acf_vf', $name, array( 'type' => 'boolean', 'sanitize_callback' => array( 'ACF_VF_Validation', 'is_true' ) ) );
 		}
 	}
-	public function settings_menu() { add_options_page( __( 'Validated Field', 'acf_vf' ), __( 'Validated Field', 'acf_vf' ), 'manage_options', 'acf-validated-field', array( $this, 'settings_page' ) ); }
+	public function settings_menu() { add_options_page( __( 'Validated Field', 'validated-field-for-acf' ), __( 'Validated Field', 'validated-field-for-acf' ), 'manage_options', 'acf-validated-field', array( $this, 'settings_page' ) ); }
 	public function settings_assets( $hook ): void {
 		if ( ! in_array( $hook, array( 'settings_page_acf-validated-field', 'settings_page_acf-vf-pro-license', 'acf-field-group' ), true ) ) { return; }
 		wp_enqueue_style( 'acf-vf-settings', plugins_url( 'includes/app/assets/settings.css', ACF_VF_PLUGIN_FILE ), array(), (string) filemtime( __DIR__ . '/app/assets/settings.css' ) );
 	}
 	public function settings_page() {
 		if ( ! current_user_can( 'manage_options' ) ) { return; }
-		echo '<div class="wrap vf-settings"><header class="vf-settings-header"><div><p class="vf-settings-eyebrow">' . esc_html__( 'SETUP & UPDATES', 'acf_vf' ) . '</p><h1>' . esc_html__( 'Validated Field', 'acf_vf' ) . '</h1><p>' . esc_html__( 'Clean data. Smoother workflows. Built around your fields.', 'acf_vf' ) . '</p></div><span class="vf-edition-badge">' . esc_html( defined( 'ACF_VF_PRO_VERSION' ) ? 'PRO' : 'FREE' ) . '</span></header><div class="vf-settings-grid"><section class="vf-settings-card"><h2>' . esc_html__( 'General settings', 'acf_vf' ) . '</h2><p class="vf-settings-muted">' . esc_html__( 'Choose where your validation runs.', 'acf_vf' ) . '</p><form action="options.php" method="post">';
+		echo '<div class="wrap vf-settings"><header class="vf-settings-header"><div><p class="vf-settings-eyebrow">' . esc_html__( 'SETUP & UPDATES', 'validated-field-for-acf' ) . '</p><h1>' . esc_html__( 'Validated Field', 'validated-field-for-acf' ) . '</h1><p>' . esc_html__( 'Clean data. Smoother workflows. Built around your fields.', 'validated-field-for-acf' ) . '</p></div><span class="vf-edition-badge">' . esc_html( defined( 'ACF_VF_PRO_VERSION' ) ? 'PRO' : 'FREE' ) . '</span></header><div class="vf-settings-grid"><section class="vf-settings-card"><h2>' . esc_html__( 'General settings', 'validated-field-for-acf' ) . '</h2><p class="vf-settings-muted">' . esc_html__( 'Choose where your validation runs.', 'validated-field-for-acf' ) . '</p><form action="options.php" method="post">';
 		settings_fields( 'acf_vf' );
-		foreach ( array( 'acf_vf_drafts' => __( 'Validate drafts globally', 'acf_vf' ), 'acf_vf_frontend' => __( 'Validate acf_form() submissions', 'acf_vf' ), 'acf_vf_frontend_css' => __( 'Load ACF form admin colors', 'acf_vf' ), 'acf_vf_debug' => __( 'Debug mode (legacy setting)', 'acf_vf' ) ) as $name => $label ) {
+		foreach ( array( 'acf_vf_drafts' => __( 'Validate drafts globally', 'validated-field-for-acf' ), 'acf_vf_frontend' => __( 'Validate acf_form() submissions', 'validated-field-for-acf' ), 'acf_vf_frontend_css' => __( 'Load ACF form admin colors', 'validated-field-for-acf' ), 'acf_vf_debug' => __( 'Debug mode (legacy setting)', 'validated-field-for-acf' ) ) as $name => $label ) {
 			echo '<p><label><input type="hidden" name="' . esc_attr( $name ) . '" value="0"><input type="checkbox" name="' . esc_attr( $name ) . '" value="1" ' . checked( ACF_VF_Validation::is_true( get_option( $name, $name !== 'acf_vf_debug' ) ), true, false ) . '> ' . esc_html( $label ) . '</label></p>';
 		}
 		submit_button(); echo '</form></section>';
@@ -277,17 +279,17 @@ class acf_field_validated_field extends acf_field {
 		if ( defined( 'ACF_VF_PRO_VERSION' ) ) { return; }
 		$url = esc_url( (string) ACF_VF_PRO_UPGRADE_URL, array( 'http', 'https' ) );
 		if ( $url === '' ) { return; }
-		echo '<section class="card acf-vf-pro-card" aria-labelledby="acf-vf-pro-title"><p class="vf-settings-eyebrow">VALIDATED FIELD PRO</p><h2 id="acf-vf-pro-title">' . esc_html__( 'Turn your fields into a workflow with Pro', 'acf_vf' ) . '</h2>';
-		echo '<p>' . esc_html__( 'Keep Free’s validation and input masks. Add the tools to calculate values, manage more records and automate the next step.', 'acf_vf' ) . '</p><dl>';
+		echo '<section class="card acf-vf-pro-card" aria-labelledby="acf-vf-pro-title"><p class="vf-settings-eyebrow">VALIDATED FIELD PRO</p><h2 id="acf-vf-pro-title">' . esc_html__( 'Turn your fields into a workflow with Pro', 'validated-field-for-acf' ) . '</h2>';
+		echo '<p>' . esc_html__( 'Keep Free’s validation and input masks. Add the tools to calculate values, manage more records and automate the next step.', 'validated-field-for-acf' ) . '</p><dl>';
 		foreach ( array(
-			__( 'Calculations that stay in sync', 'acf_vf' ) => __( 'Use formulas and rollups to calculate totals and summarize related records.', 'acf_vf' ),
-			__( 'Workflows that move work forward', 'acf_vf' ) => __( 'Run actions in the background and add approval rules to your processes.', 'acf_vf' ),
-			__( 'Tables built for real work', 'acf_vf' ) => __( 'Save views, use advanced filters, edit in bulk, import records and run background exports.', 'acf_vf' ),
+			__( 'Calculations that stay in sync', 'validated-field-for-acf' ) => __( 'Use formulas and rollups to calculate totals and summarize related records.', 'validated-field-for-acf' ),
+			__( 'Workflows that move work forward', 'validated-field-for-acf' ) => __( 'Run actions in the background and add approval rules to your processes.', 'validated-field-for-acf' ),
+			__( 'Tables built for real work', 'validated-field-for-acf' ) => __( 'Save views, use advanced filters, edit in bulk, import records and run background exports.', 'validated-field-for-acf' ),
 		) as $feature => $description ) {
 			echo '<div class="vf-pro-feature"><dt><strong>' . esc_html( $feature ) . '</strong></dt><dd>' . esc_html( $description ) . '</dd></div>';
 		}
-		echo '</dl><p><a class="button button-primary" href="' . $url . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Get Validated Field Pro', 'acf_vf' ) . '<span class="screen-reader-text"> ' . esc_html__( '(opens in a new tab)', 'acf_vf' ) . '</span></a></p><h3>' . esc_html__( 'How to upgrade', 'acf_vf' ) . '</h3><ol>';
-		foreach ( array( __( 'Get your Pro license and download the Pro ZIP.', 'acf_vf' ), __( 'Install Pro alongside Free from Plugins → Add Plugin → Upload Plugin. Keep Free active.', 'acf_vf' ), __( 'Return to these settings and activate your license with your consent to receive updates.', 'acf_vf' ) ) as $step ) { echo '<li>' . esc_html( $step ) . '</li>'; }
-		echo '</ol><p>' . esc_html__( 'Your installed Pro features keep working when update access ends.', 'acf_vf' ) . '</p></section>';
+		echo '</dl><p><a class="button button-primary" href="' . $url . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Get Validated Field Pro', 'validated-field-for-acf' ) . '<span class="screen-reader-text"> ' . esc_html__( '(opens in a new tab)', 'validated-field-for-acf' ) . '</span></a></p><h3>' . esc_html__( 'How to upgrade', 'validated-field-for-acf' ) . '</h3><ol>';
+		foreach ( array( __( 'Get your Pro license and download the Pro ZIP.', 'validated-field-for-acf' ), __( 'Install Pro alongside Free from Plugins → Add Plugin → Upload Plugin. Keep Free active.', 'validated-field-for-acf' ), __( 'Return to these settings and activate your license with your consent to receive updates.', 'validated-field-for-acf' ) ) as $step ) { echo '<li>' . esc_html( $step ) . '</li>'; }
+		echo '</ol><p>' . esc_html__( 'Your installed Pro features keep working when update access ends.', 'validated-field-for-acf' ) . '</p></section>';
 	}
 }

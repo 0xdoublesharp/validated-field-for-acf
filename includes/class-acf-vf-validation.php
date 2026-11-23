@@ -452,7 +452,7 @@ class ACF_VF_Validation {
 		if ( true !== $valid ) {
 			return $valid;
 		}
-		if ( !self::bounded_value( $value ) ) { return __( 'The value exceeds the validation processing limit.', 'acf_vf' ); }
+		if ( !self::bounded_value( $value ) ) { return __( 'The value exceeds the validation processing limit.', 'validated-field-for-acf' ); }
 		$post_id = null === $post_id ? self::context() : ( $post_id === 0 ? 0 : acf_get_valid_post_id( $post_id ) );
 		$entries = self::submitted_entries( null, $post_id );
 		$entry = isset( $entries[$input] ) ? $entries[$input] : null;
@@ -464,7 +464,7 @@ class ACF_VF_Validation {
 			$readonly_previous = $field['sub_field']['default_value'];
 		}
 		if ( self::is_true( isset( $field['read_only'] ) ? $field['read_only'] : false ) && self::comparable( $value ) !== self::comparable( $readonly_previous ) ) {
-			return __( 'This field is read only.', 'acf_vf' );
+			return __( 'This field is read only.', 'validated-field-for-acf' );
 		}
 		$status = isset( $_POST['post_status'] ) && is_scalar( $_POST['post_status'] ) ? sanitize_key( $_POST['post_status'] ) : get_post_status( $post_id );
 		$actual_save = self::$save_post_id !== null && (string) self::$save_post_id === (string) $post_id;
@@ -482,26 +482,26 @@ class ACF_VF_Validation {
 		if ( $value === '' || $value === null || $value === false || $value === array() ) {
 			return true;
 		}
-		$message = !empty( $field['message'] ) ? $field['message'] : __( 'The value is not valid.', 'acf_vf' );
+		$message = !empty( $field['message'] ) ? $field['message'] : __( 'The value is not valid.', 'validated-field-for-acf' );
 		$function = isset( $field['function'] ) ? $field['function'] : 'none';
 		$pattern = str_replace( array( '%%squot%%', '%%dquot%%' ), array( "'", '"' ), isset( $field['pattern'] ) ? $field['pattern'] : '' );
 		if ( $function !== 'none' && $function !== '' ) {
 			if ( $pattern === '' ) {
-				return __( 'This field\'s validation is not properly configured.', 'acf_vf' );
+				return __( 'This field\'s validation is not properly configured.', 'validated-field-for-acf' );
 			}
 			if ( $function === 'regex' ) {
 				$subject = is_array( $value ) ? implode( ',', self::atoms( $value ) ) : (string)$value;
-				if ( strlen( $pattern ) > 4096 || strlen( $subject ) > 65536 ) { return __( 'The value exceeds the validation processing limit.', 'acf_vf' ); }
+				if ( strlen( $pattern ) > 4096 || strlen( $subject ) > 65536 ) { return __( 'The value exceeds the validation processing limit.', 'validated-field-for-acf' ); }
 				$backtrack = ini_get( 'pcre.backtrack_limit' ); $recursion = ini_get( 'pcre.recursion_limit' );
 				try {
-					if ( ini_set( 'pcre.backtrack_limit', (string)min( (int)$backtrack, 100000 ) ) === false || ini_set( 'pcre.recursion_limit', (string)min( (int)$recursion, 1000 ) ) === false ) { return __( 'Regex validation could not be bounded.', 'acf_vf' ); }
+					if ( ini_set( 'pcre.backtrack_limit', (string)min( (int)$backtrack, 100000 ) ) === false || ini_set( 'pcre.recursion_limit', (string)min( (int)$recursion, 1000 ) ) === false ) { return __( 'Regex validation could not be bounded.', 'validated-field-for-acf' ); }
 					$matched = @preg_match( self::regex_pattern( $pattern ), $subject );
 				} finally { ini_set( 'pcre.backtrack_limit', $backtrack ); ini_set( 'pcre.recursion_limit', $recursion ); }
 				if ( 1 !== $matched ) {
 					return $message;
 				}
 			} elseif ( $function === 'php' ) {
-				if ( !self::php_approved( $field ) ) { return __( 'PHP validation requires approval by a code administrator.', 'acf_vf' ); }
+				if ( !self::php_approved( $field ) ) { return __( 'PHP validation requires approval by a code administrator.', 'validated-field-for-acf' ); }
 				$inputs = array();
 				// Keep the legacy top-level aggregate entries alongside resolved leaves.
 				$submitted = isset( $_POST['acf'] ) ? (array) wp_unslash( $_POST['acf'] ) : array();
@@ -530,7 +530,7 @@ class ACF_VF_Validation {
 						return $message;
 					}
 				} catch ( Throwable $error ) {
-					return __( 'PHP validation could not be completed.', 'acf_vf' );
+					return __( 'PHP validation could not be completed.', 'validated-field-for-acf' );
 				}
 			}
 		}
@@ -538,10 +538,15 @@ class ACF_VF_Validation {
 		if ( !in_array( $scope, array( 'global', 'post_type', 'post_key', 'this_post', 'this_post_key' ), true ) ) {
 			return true;
 		}
-		if ( !in_array( $scope, array( 'this_post', 'this_post_key' ), true ) && !current_user_can( 'edit_plugins' ) && !current_user_can( 'install_plugins' ) && !apply_filters( 'acf_vf/allow_cross_record_unique', false, $field, $post_id ) ) {
-			return __( 'Cross-record uniqueness is unavailable for this operation.', 'acf_vf' );
+		if ( in_array( $scope, array( 'global', 'post_type', 'post_key' ), true )
+			&& !current_user_can( 'manage_options' )
+			&& !current_user_can( 'edit_plugins' )
+			&& !current_user_can( 'install_plugins' )
+			&& !self::is_true( $field['unique_allow_non_admin'] ?? false )
+			&& !apply_filters( 'acf_vf/allow_cross_record_unique', false, $field, $post_id ) ) {
+			return __( 'Cross-record uniqueness is unavailable for this operation.', 'validated-field-for-acf' );
 		}
-		$duplicate = __( 'This value must be unique.', 'acf_vf' );
+		$duplicate = __( 'This value must be unique.', 'validated-field-for-acf' );
 		$key_scope = in_array( $scope, array( 'post_key', 'this_post_key' ), true );
 		$atoms = self::atoms( $value );
 		if ( count( $atoms ) !== count( array_unique( $atoms ) ) ) {
@@ -556,7 +561,7 @@ class ACF_VF_Validation {
 			}
 		}
 		$stored = self::stored_duplicate( $value, $post_id, $name, $shape, $scope, $field, $entries );
-		if ( $stored === null ) { return __( 'Uniqueness validation exceeds the processing limit. Narrow the scope.', 'acf_vf' ); }
+		if ( $stored === null ) { return __( 'Uniqueness validation exceeds the processing limit. Narrow the scope.', 'validated-field-for-acf' ); }
 		return $stored ? $duplicate : true;
 	}
 	/** Post scopes use post statuses; user scopes stay in usermeta and options stay in their named namespace. */

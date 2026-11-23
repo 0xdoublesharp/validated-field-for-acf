@@ -1,22 +1,20 @@
 === Advanced Custom Fields: Validated Field ===
 Contributors: doublesharp
-Tags: acf, advanced custom fields, validation, validate, regex, php, mask, input, readonly, add-on, addon, add on, unique, input, edit, admin, post, page, meta
+Tags: acf, validation, input masks, uniqueness, tables
 Requires at least: 6.0
 Requires PHP: 8.0
-Tested up to: 7.1.3
+Tested up to: 6.7
 Stable tag: 2.0.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
-The Validated Field add-on for Advanced Custom Fields provides input masking and server-side validation of other field types.
+Add validation and input masks to ACF fields, and manage posts and custom records in the Validated Field workspace.
 
 == Description ==
-= Validated Field Add-On =
-The **Validated Field** add-on for [Advanced Custom Fields](http://wordpress.org/extend/plugins/advanced-custom-fields/)
-provides a wrapper for other input types which allows you to provide client side input masking using the jQuery 
-[Masked Input Plugin](http://digitalbush.com/projects/masked-input-plugin/), server side validation using either PHP regular expressions 
-or PHP code, the option of ensuring a field's uniqueness for all posts by `post_type` and `meta_key`, `post_type`, or site wide, or a 
-single post by meta_key, as well as marking a field as read-only. Configure fields in the ACF Field Group editor. Validation rules use the WordPress code editor.
+= ACF validation =
+Choose **Validated Field** in the [Advanced Custom Fields](https://wordpress.org/plugins/advanced-custom-fields/) field group editor and select the input type to wrap. Set a text mask, make the field read-only, or validate values with a regular expression or approved PHP code. The WordPress code editor is available for PHP rules.
+
+Require unique values within a record, within a post type, or across the site. Cross-record checks are available to administrators by default. Enable them for other users on individual fields when it is appropriate to reveal whether a value already exists.
 
 = Features =
 1. **Input Masking** - easily set masks on text inputs to ensure data is properly formatted.
@@ -29,14 +27,14 @@ single post by meta_key, as well as marking a field as read-only. Configure fiel
 8. **Polylang** - share identifiers between translations while detecting unrelated duplicates. With free Polylang, opt into top-level field copying, manual translation, or synchronization in the field's Advanced settings.
 
 = Compatibility =
-Requires Advanced Custom Fields 6.0 or newer, Free or Pro. PHP 8.0 or newer is required. This is an unreleased development revision; see `docs/compatibility.md` for exact tested versions and limits. Legacy ACF 4/5 integration is no longer loaded.
+Requires Advanced Custom Fields 6.0 or newer (Free or Pro) and PHP 8.0 or newer.
 
 Validated Field can be used inside native groups, repeaters, and flexible-content layouts. The editor offers native input types, rather than wrapping layout containers themselves. PHP rules are trusted administrator code. Legacy field uniqueness is application-level validation. Managed application objects use transactional unique claims and version checks. Direct `update_field()` calls remain low-level APIs for ordinary ACF content; managed records must use the Records service.
 
-= Application workspace (development) =
-Free includes private objects, record screens, field validation, permissions, relationships, scalar inline editing, Quick Add, personal table columns, filtered audit history and basic CSV/configuration export. Opt into ACF tables for existing posts, pages and custom post types without changing their native editors, visibility or field identities. The separate Validated Field Pro add-on supplies visual workflow/design tools, formulas, rollups, automation, assigned saved views, rich inline editors, multiple sorts, nested filters, metrics, conditional formatting, background bulk/export/quality tools, imports, audit restore and generated headless APIs. ACF Pro is a separate product; either ACF edition can be used with either Validated Field edition.
+= ACF Tables and workspace =
+Enable ACF Tables to view and edit existing posts, pages, and custom post types from the **Validated Field** workspace. Records keep their native WordPress editors, visibility, and ACF field identities. The workspace also supports private objects, record permissions, relationships, inline editing for scalar values, Quick Add, personal table columns, filtered audit history, and basic CSV and configuration export.
 
-Both editions use Free's permission and validation services. Removing Pro preserves configuration and data and blocks affected writes until its required runtime returns. License expiration does not disable installed Pro functionality. Free contains no licensing client or remote billing requests. See the project edition and qualification documentation before using this unreleased development build.
+The optional Validated Field Pro add-on adds formulas, rollups, workflows, saved views, advanced filters, bulk editing, imports, background exports, audit restore, and headless APIs. Either version of Validated Field works with ACF Free or ACF Pro.
 
 == Installation ==
 1. Download the plugin and extract to the `/wp-content/plugins/` directory.
@@ -60,11 +58,12 @@ Global configuration is under `Settings > Validated Field`.
 6. Example of client side PHP validation failure.
 
 == Changelog ==
-= 2.0.0 (unreleased) =
+= 2.0.0 =
 * Split the shared runtime and original field validation into Free, with optional business workflows and advanced tools in a separate Pro add-on.
+* Add a per-field opt-in for cross-record uniqueness checks by non-administrators.
 * Preserve configuration and confidential computed values when the required add-on is absent; park unavailable queued work for explicit review.
 * Add Polylang translation-family uniqueness for cross-record post scopes, including REST saves.
-* Add opt-in top-level field copy/ignore/manual-translation/sync workflows with free Polylang, ACF reference metadata, translated reference IDs, and source/target edit permissions. Nested layout policies and licensed Polylang Pro workflows remain unqualified.
+* Add opt-in top-level field copy, ignore, manual translation, and sync workflows with free Polylang, ACF reference metadata, translated reference IDs, and source and target edit permissions.
 * Register a modern ACF field instance and preserve original field and metadata names.
 * Delegate native input settings, validation, value handling, and REST schema/output.
 * Restore field type selection and replace obsolete field editor and submission scripts.

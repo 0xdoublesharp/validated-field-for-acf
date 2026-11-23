@@ -116,15 +116,15 @@ class ACF_VF_Polylang {
 	public function render_settings( $field ) {
 		if ( ! $this->enabled() || ( ! empty( $field['parent'] ) && acf_get_field( $field['parent'] ) ) ) { return; }
 		acf_render_field_setting( $field, array(
-			'label' => __( 'Polylang translation', 'acf_vf' ), 'name' => 'vf_translation', 'type' => 'select',
+			'label' => __( 'Polylang translation', 'validated-field-for-acf' ), 'name' => 'vf_translation', 'type' => 'select',
 			'value' => $this->mode( $field ),
-			'instructions' => __( 'For top-level fields with free Polylang. Manual translation copies the initial value for editing. Synchronize requires permission to edit both records. Polylang Pro manages its own translation settings.', 'acf_vf' ),
+			'instructions' => __( 'For top-level fields with free Polylang. Manual translation copies the initial value for editing. Synchronize requires permission to edit both records. Polylang Pro manages its own translation settings.', 'validated-field-for-acf' ),
 			'choices' => array(
-				'' => __( 'Use existing Polylang behavior', 'acf_vf' ),
-				'ignore' => __( 'Ignore when copying', 'acf_vf' ),
-				'copy_once' => __( 'Copy once', 'acf_vf' ),
-				'translate' => __( 'Copy for manual translation', 'acf_vf' ),
-				'sync' => __( 'Synchronize across translations', 'acf_vf' ),
+				'' => __( 'Use existing Polylang behavior', 'validated-field-for-acf' ),
+				'ignore' => __( 'Ignore when copying', 'validated-field-for-acf' ),
+				'copy_once' => __( 'Copy once', 'validated-field-for-acf' ),
+				'translate' => __( 'Copy for manual translation', 'validated-field-for-acf' ),
+				'sync' => __( 'Synchronize across translations', 'validated-field-for-acf' ),
 			),
 		) );
 	}

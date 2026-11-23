@@ -2,7 +2,7 @@
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 
-/** Authenticated adapters. Business access and validation remain in shared services. */
+/** REST adapters. Business access and validation remain in shared services. */
 final class Rest {
     // Nine groups each add an object and conditions array, followed by a leaf
     // and value list. Reserve eight more levels for workspace/view/job envelopes.
@@ -52,7 +52,8 @@ final class Rest {
         foreach ($routes as [$path, $method, $handler, $admin]) {
             register_rest_route('acf-vf/v1', $path, [
                 'methods' => $method,
-                'permission_callback' => static function () use ($admin) {
+                'permission_callback' => static function () use ($handler, $admin) {
+                    if ($handler === 'preview_read') { return true; }
                     if (!get_current_user_id()) { return self::error('unauthorized', 'Authentication required.', 401); }
                     if ($admin && !current_user_can('manage_options')) { return self::error('forbidden', 'Configuration requires manage_options.', 403); }
                     return true;
@@ -140,6 +141,12 @@ final class Rest {
                 $error = self::keys($data, ['page', 'per_page']) ?: self::query_args($data);
                 if ($error) { return $error; }
                 return $handler === 'audit' ? Audit::history($id, $data) : Jobs::listing($data);
+            case 'retry':
+                $error = self::keys($data, []);
+                if ($error) { return $error; }
+                $retried = Jobs::retry((int) $r->get_url_params()['job']);
+                if (is_wp_error($retried)) { return $retried; }
+                return $retried ? ['retried' => true] : self::error('job_retry', 'Job is unavailable or cannot be retried.', 409);
             case 'languages': return self::keys($data, []) ?: ['items' => Localization::languages()];
             case 'translation':
                 $error = self::keys($data, ['language']);

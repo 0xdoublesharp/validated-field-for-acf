@@ -30,6 +30,7 @@
                         }
                     }, true);
                 }
+                return;
             }
             var mask = $field.attr('data-vf-mask');
             if (!mask || !$.fn.mask) return;
@@ -47,5 +48,9 @@
     if (window.acf) {
         acf.addAction('ready append', initialize);
         acf.addAction('new_field', function (field) { initialize(field.$el); });
+        acf.addFilter('wysiwyg_tinymce_settings', function (settings, id, field) {
+            if (field.$el.closest('[data-vf="1"][data-vf-readonly="1"]').length) settings.readonly = true;
+            return settings;
+        });
     }
 })(jQuery);

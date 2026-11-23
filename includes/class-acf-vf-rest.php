@@ -99,7 +99,7 @@ class ACF_VF_REST {
 			}
 			$validation_errors = acf_get_validation_errors();
 			if ( $validation_errors ) {
-				return new WP_Error( 'acf_vf_validation_failed', __( 'ACF field validation failed.', 'acf_vf' ), array( 'status' => 400, 'errors' => $validation_errors ) );
+				return new WP_Error( 'acf_vf_validation_failed', __( 'ACF field validation failed.', 'validated-field-for-acf' ), array( 'status' => 400, 'errors' => $validation_errors ) );
 			}
 		} finally {
 			$_POST = $old_post;
