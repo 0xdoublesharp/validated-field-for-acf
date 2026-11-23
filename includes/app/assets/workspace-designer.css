@@ -103,14 +103,15 @@
   padding: 12px 14px 4px;
 }
 .vfd-designer .vfd-fieldset > legend { color: #243951; font-weight: 600; max-width: 100%; padding: 0 6px; }
-.vfd-designer .vfd-card, .vfd-designer .vfd-details {
+.vfd-designer :is(.vfd-card, .vfd-details, .vfd-pro-info) {
   border: 1px solid var(--vfd-line);
   border-radius: 9px;
   margin: 0 0 12px;
   min-width: 0;
   padding: 0 14px;
 }
-.vfd-designer .vfd-card { background: var(--vfd-surface); }
+.vfd-designer :is(.vfd-card, .vfd-pro-info) { background: var(--vfd-surface); }
+.vfd-designer .vfd-pro-info { padding-block: 10px; }
 .vfd-designer .vfd-details { background: #fff; }
 .vfd-designer :is(.vfd-card, .vfd-details) > summary {
   cursor: pointer;
@@ -131,7 +132,7 @@
   .vfd-designer .vfd-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .vfd-designer .vfd-tabs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vfd-designer .vfd-tabs .vfd-button { min-height: 44px; }
-  .vfd-designer :is(.vfd-card, .vfd-details) { padding-left: 9px; padding-right: 9px; }
+  .vfd-designer :is(.vfd-card, .vfd-details, .vfd-pro-info) { padding-left: 9px; padding-right: 9px; }
   .vfd-designer .vfd-fieldset { padding-left: 9px; padding-right: 9px; }
   .vfd-designer .vfd-toolbar { justify-content: flex-start; }
 }

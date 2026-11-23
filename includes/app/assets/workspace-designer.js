@@ -728,10 +728,10 @@ function buildDesigner({ definition = {}, schema = {}, roles = {} } = {}) {
   const tabs = node('div', { class: 'vfd-tabs', role: 'tablist', 'aria-label': 'Object designer sections' });
   const panels = node('div', { class: 'vfd-panels' });
   if (!extraSections.length) {
-    const content = [help('Visual rules, automation, calculations and custom record layouts are available with Validated Field Pro. Existing settings are retained.')];
+    const content = [help('Validated Field Pro adds formulas, rollups, automation, saved views, and bulk editing.')];
     const upgradeUrl = global?.vfWorkspace?.proUpgradeUrl;
     if (upgradeUrl && !global?.vfWorkspace?.proActive) content.push(node('a', { href: upgradeUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Learn about Validated Field Pro' }));
-    metadata.append(node('div', {}, content));
+    metadata.append(node('aside', { class: 'vfd-pro-info', 'aria-label': 'Validated Field Pro' }, content));
   }
   const sectionList = [['Object', metadata], ['Fields', fields.element], ['Uniqueness', uniqueness.element], ...extraSections];
   const tabRows = [];

@@ -32,6 +32,18 @@
       onclick: action,
       ...(icon ? { "data-icon": icon } : {}),
     });
+  const starterTemplates = [
+    { slug: "projects", label: "Projects", singular: "Project", fields: {
+      stage: { type: "select", label: "Stage", choices: { planned: "Planned", active: "Active", complete: "Complete" } },
+      hours: { type: "number", label: "Hours" },
+      budget: { type: "number", label: "Budget" },
+    } },
+    { slug: "contacts", label: "Contacts", singular: "Contact", fields: {
+      email: { type: "email", label: "Email" },
+      phone: { type: "text", label: "Phone" },
+      company: { type: "text", label: "Company" },
+    } },
+  ];
   const navigationMenu = (label, className, items) => {
     const summary = el("summary", { class: "vf-button", text: label });
     const disclosure = el("details", { class: className + " vf-disclosure", name: "vf-navigation" }, [
@@ -550,7 +562,11 @@
             text: "An object holds a collection of records, such as Accounts, Contacts, or Projects.",
           }),
           config.configure
-            ? button("Create an object", () => designer(), true)
+            ? el("div", { class: "vf-empty-actions" }, [
+                button("Create an object", safe(() => designer()), true),
+                el("a", { class: "vf-button", href: "options-general.php?page=acf-validated-field#vf-wordpress-tables", text: "Connect an existing CPT" }),
+                ...starterTemplates.map(template => button(`Start with ${template.label}`, safe(() => designer("", template)))),
+              ])
             : el("p", {
                 text: "Ask an administrator to configure objects for this workspace.",
               }),
@@ -1627,7 +1643,7 @@
             text: `Attempts: ${job.attempts}. Available: ${job.available_at}`,
           }),
           el("p", { text: job.last_error || "" }),
-          ["failed", "retry"].includes(job.status)
+          ["failed", "retry", "blocked"].includes(job.status)
             ? button(
                 "Retry",
                 dialogAction(mutation(({ request }) => request("retry_job", { id: Number(job.id) }), operation => jobsDialog(operation))),
@@ -1638,11 +1654,13 @@
     );
     openDialog("Automation jobs", body, null);
   }
-  async function designer(slug = "") {
+  async function designer(slug = "", template = null) {
     const ownsDialog = beginDialog(!slug);
     const schema = await dialogRequest("schema", {}, ownsDialog);
     if (!ownsDialog()) return;
-    const definition = schema.objects[slug] || {
+    const definition = template
+      ? { ...template, slug: schema.objects[template.slug] ? "" : template.slug }
+      : schema.objects[slug] || {
       slug: "",
       label: "",
       singular: "",
