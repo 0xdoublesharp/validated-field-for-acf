@@ -4,7 +4,7 @@ Tags: acf, validation, input masks, uniqueness, tables
 Requires at least: 6.0
 Requires PHP: 8.0
 Tested up to: 7.2
-Stable tag: 2.0.0
+Stable tag: 2.0.1
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html
 
@@ -58,6 +58,11 @@ Global configuration is under `Settings > Validated Field`.
 6. Example of client side PHP validation failure.
 
 == Changelog ==
+= 2.0.1 =
+* Clarify the record workspace, table setup, settings, and configuration transfer.
+* Update the WordPress compatibility declaration to 7.2.
+* Address Plugin Check findings in request handling, HTML output, and database queries.
+
 = 2.0.0 =
 * Split the shared runtime and original field validation into Free, with optional business workflows and advanced tools in a separate Pro add-on.
 * Add a per-field opt-in for cross-record uniqueness checks by non-administrators.

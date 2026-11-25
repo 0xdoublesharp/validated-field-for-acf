@@ -4,7 +4,7 @@ Plugin Name: Validated Field for ACF
 Plugin URI: https://validated-field.doublesharp.com/
 Description: Server-side validation, input masks, and a records workspace for Advanced Custom Fields.
 Author: Justin Silver
-Version: 2.0.0
+Version: 2.0.1
 Requires at least: 6.0
 Requires PHP: 8.0
 Author URI: https://doublesharp.com/
@@ -13,7 +13,7 @@ Text Domain: validated-field-for-acf
 */
 
 if ( ! defined( 'ACF_VF_VERSION' ) )
-	define( 'ACF_VF_VERSION', '2.0.0' );
+	define( 'ACF_VF_VERSION', '2.0.1' );
 
 if ( !defined('ACF_VF_PLUGIN_FILE') )
 	define( 'ACF_VF_PLUGIN_FILE', __FILE__ );
