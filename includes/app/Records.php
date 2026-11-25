@@ -391,6 +391,7 @@ final class Records {
         if (array_diff(array_keys($values), array_keys($definitions))) { return self::error('unknown_field', 'Unknown prepared field.'); }
         if (!function_exists('acf_validate_value')) { return self::error('acf_unavailable', 'ACF validation is unavailable.', 503); }
         $errors = [];
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.NonceVerification.Recommended -- Preserve the caller's globals verbatim and restore them in finally.
         $post_state = $_POST; $request_state = $_REQUEST;
         $form_state = acf_get_form_data('post_id');
         $vf_form_state = acf_get_form_data('vf_post_id');
@@ -399,6 +400,7 @@ final class Records {
             $submitted = [];
             foreach ($definitions as $name => $field) { $submitted[$field['key']] = self::native_value($values[$name] ?? null, $field); }
             $_POST = ['acf' => $submitted, '_acf_post_id' => $id, 'post_ID' => $id, 'post_status' => $status];
+            // phpcs:ignore WordPress.Security.NonceVerification.Missing -- This is the synthetic ACF request just built from the validated record.
             $_REQUEST = $_POST;
             acf_set_form_data('post_id', $id);
             acf_set_form_data('vf_post_id', $id);

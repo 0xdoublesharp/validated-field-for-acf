@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read private index rows and their schema revision so a cached candidate set cannot omit records.
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 
@@ -24,6 +25,7 @@ final class Index {
         global $wpdb;
         $revision = Schema::object($object)['_revision'] ?? '';
         if ((int) get_option('acf_vf_app_storage_version') < 2) { return ['revision' => $revision, 'cursor' => 0, 'complete' => false]; }
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $row = $wpdb->get_row($wpdb->prepare('SELECT schema_revision,value_text FROM ' . Storage::table('index') . ' WHERE object_key=%s AND record_id=0 AND field_key=%s', $object, '__state'), ARRAY_A);
         $state = $row ? json_decode($row['value_text'], true) : null;
         if (!$state || $row['schema_revision'] !== $revision) { return ['revision' => $revision, 'cursor' => 0, 'complete' => false]; }
@@ -164,6 +166,7 @@ final class Index {
             $predicate = self::predicate($alias, $type, $filter, $args);
             if ($predicate === null) { continue; }
             if ($n) { $joins[] = 'JOIN ' . Storage::table('index') . " $alias ON $alias.object_key=vfi0.object_key AND $alias.record_id=vfi0.record_id"; }
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQL.NotPrepared -- Generated aliases and fixed predicates are combined with prepared values.
             $clauses[] = $wpdb->prepare("$alias.field_key=%s AND $alias.schema_revision=%s", $filter['field'], Schema::object($object)['_revision']) . ' AND (' . ($args ? $wpdb->prepare($predicate, $args) : $predicate) . ')';
             $n++;
         }
@@ -176,7 +179,8 @@ final class Index {
         $ids = []; $cursor = 0; $work=0;
         $work_limit=max(1,min(10000,(int)apply_filters('acf_vf/app/query_work_limit',10000,$object)));
         do {
-            $batch = $wpdb->get_col($base . ' AND vfi0.record_id>' . $cursor . ' ORDER BY vfi0.record_id ASC LIMIT 200');
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Fixed identifiers and prepared clauses form the base; the cursor is a prepared integer.
+            $batch = $wpdb->get_col($base . $wpdb->prepare(' AND vfi0.record_id>%d ORDER BY vfi0.record_id ASC LIMIT 200', $cursor));
             if ($wpdb->last_error) { return self::error(); }
             foreach ($batch as $id) {
                 $cursor = (int) $id;

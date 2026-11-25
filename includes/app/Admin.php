@@ -61,13 +61,14 @@ final class Admin {
 
     public static function handle(): void {
         check_ajax_referer('acf-vf-workspace', 'nonce');
+        // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Decode and validate the original JSON without rewriting its values.
         $raw = isset($_POST['data']) && is_string($_POST['data']) ? wp_unslash($_POST['data']) : '{}';
         if (strlen($raw) > 1048576) { wp_send_json_error(['message' => 'Request exceeds 1 MiB.'], 413); }
         $decoded = json_decode($raw, false, Rest::JSON_DEPTH);
         if (!is_object($decoded)) { wp_send_json_error(['message' => 'Expected a JSON object.'], 400); }
         $data = json_decode($raw, true, Rest::JSON_DEPTH);
         if (!Rest::bounded($data)) { wp_send_json_error(['message' => 'Input nesting or size exceeds limits.'], 400); }
-        $operation = isset($_POST['operation']) && is_string($_POST['operation']) ? sanitize_key($_POST['operation']) : '';
+        $operation = isset($_POST['operation']) && is_string($_POST['operation']) ? sanitize_key(wp_unslash($_POST['operation'])) : '';
         $result = self::dispatch($operation, $data);
         if (is_wp_error($result)) {
             $details = $result->get_error_data();

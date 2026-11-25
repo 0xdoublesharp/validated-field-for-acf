@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Compute quotas and delete bounded batches against live audit and queue rows.
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 require_once __DIR__ . '/WorkBudget.php';
@@ -9,17 +10,21 @@ final class Retention {
     public static function admit_audit(int $actor, int $bytes) {
         global $wpdb; $table = Storage::table('audit');
         $limits = self::audit_limits();
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $owned = $wpdb->get_row($wpdb->prepare("SELECT COUNT(*) AS n,COALESCE(SUM(bytes),0) AS b FROM $table WHERE actor_id=%d", $actor), ARRAY_A);
         if ($wpdb->last_error || !$owned) { return self::audit_error(); }
         if ((int) $owned['n'] >= $limits['actor_rows'] || (int) $owned['b'] + $bytes > $limits['actor_bytes']) { return self::audit_error(); }
         // The ID span is an upper bound on retained rows; count exactly only near the ceiling.
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $span = $wpdb->get_row("SELECT COALESCE(MAX(id)-MIN(id)+1,0) AS n FROM $table", ARRAY_A);
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         if ((int) ($span['n'] ?? 0) >= $limits['site_rows'] && (int) $wpdb->get_var("SELECT COUNT(*) FROM $table") >= $limits['site_rows']) { return self::audit_error(); }
         return true;
     }
 
     public static function audit(int $record_id): void {
         global $wpdb; $table = Storage::table('audit');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id,bytes FROM $table WHERE record_id=%d ORDER BY id DESC LIMIT 201", $record_id), ARRAY_A);
         if ($wpdb->last_error || !WorkBudget::consume(count($rows))) { throw new \RuntimeException('Audit retention is unavailable.'); }
         $bytes = 0;
@@ -29,6 +34,7 @@ final class Retention {
                 // The newest event is always kept, even alone over the byte budget; the per-actor
                 // quota bounds it. Everything older than the first event past the budget is removed.
                 $operator = $index === 0 ? '<' : '<=';
+                // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- The table and comparison operator are fixed choices; IDs are prepared.
                 if ($wpdb->query($wpdb->prepare("DELETE FROM $table WHERE record_id=%d AND id$operator%d ORDER BY id LIMIT 500", $record_id, $row['id'])) === false) { throw new \RuntimeException('Audit retention limit exceeded.'); }
                 break;
             }
@@ -38,7 +44,9 @@ final class Retention {
     /** Admission reads only indexed actor/size metadata, never retained payload bodies. */
     public static function reserve_job(int $actor, int $payload_bytes) {
         global $wpdb; $table = Storage::table('jobs');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $site = $wpdb->get_row("SELECT COUNT(*) AS n,COALESCE(SUM(payload_bytes),0) AS b FROM $table", ARRAY_A);
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $owned = $wpdb->get_row($wpdb->prepare("SELECT COUNT(*) AS n,COALESCE(SUM(payload_bytes),0) AS b FROM $table WHERE actor_id=%d", $actor), ARRAY_A);
         if ($wpdb->last_error || !$site || !$owned) { return self::error(); }
         if (!WorkBudget::consume(2)) { return WorkBudget::error(); }
@@ -46,6 +54,7 @@ final class Retention {
         $fits = static function () use (&$count, &$bytes, &$owned_rows, &$owned_bytes, $payload_bytes) { return $owned_rows < 1000 && $owned_bytes + $payload_bytes <= 16777216 && $count < 10000 && $bytes + $payload_bytes <= 134217728; };
         if ($fits()) { return true; }
         // Reclaim only this actor's oldest successful work when its retained quota is full.
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $completed = $wpdb->get_results($wpdb->prepare("SELECT id,payload_bytes FROM $table WHERE actor_id=%d AND status='completed' ORDER BY id LIMIT 1000", $actor), ARRAY_A);
         if ($wpdb->last_error) { return self::error(); }
         if (!WorkBudget::consume(count($completed))) { return WorkBudget::error(); }
@@ -64,9 +73,11 @@ final class Retention {
         Storage::install();
         global $wpdb;
         $audit = Storage::table('audit'); $jobs = Storage::table('jobs');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $wpdb->query($wpdb->prepare("DELETE FROM $audit WHERE created_at < %s ORDER BY id LIMIT 500", gmdate('Y-m-d H:i:s', time()-90*86400)));
         // Expiry is selected before LIMIT so recent low-ID rows cannot strand expired later rows.
         foreach (['completed'=>7, 'failed'=>30] as $status=>$days) {
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $wpdb->query($wpdb->prepare("DELETE FROM $jobs WHERE status=%s AND completed_at IS NOT NULL AND completed_at < %s ORDER BY completed_at LIMIT 500", $status, gmdate('Y-m-d H:i:s', time()-$days*86400)));
         }
     }

@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and compare authoritative metadata and observation rows inside the same transaction.
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 
@@ -35,7 +36,9 @@ final class NativeTables {
         }
         add_action('acf_vf/settings_sections',[self::class,'settings_section'],20);
         add_action('admin_init',static function (): void {
-            if (($_GET['page']??'')!=='validated-field-tables' || !current_user_can('manage_options') || isset($_POST['vf_native_table_nonce'])) { return; }
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Read-only redirect for the legacy settings URL; POST requests stay on their nonce-checked path.
+            if (!is_string($_GET['page']??null) || wp_unslash($_GET['page'])!=='validated-field-tables' || !current_user_can('manage_options') || isset($_POST['vf_native_table_nonce'])) { return; }
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only destination parameter.
             $object=is_string($_GET['object']??null)?sanitize_key(wp_unslash($_GET['object'])):'';
             wp_safe_redirect(add_query_arg(['page'=>'acf-validated-field','object'=>$object],admin_url('options-general.php')).'#vf-wordpress-tables'); exit;
         });
@@ -207,6 +210,7 @@ final class NativeTables {
             $clauses[]='(meta_key=%s OR meta_key=%s OR meta_key LIKE %s OR meta_key LIKE %s)';
             array_push($args,$name,'_'.$name,$wpdb->esc_like($name.'_').'%',$wpdb->esc_like('_'.$name.'_').'%');
         }
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- Fixed placeholder templates form the clauses; metadata keys are prepared.
         $rows=$clauses?$wpdb->get_results($wpdb->prepare("SELECT meta_key,SHA2(meta_value,256) AS digest FROM {$wpdb->postmeta} WHERE post_id=%d AND meta_key NOT IN (%s,%s) AND meta_key NOT LIKE %s AND (".implode(' OR ',$clauses).') ORDER BY meta_key,meta_id LIMIT 10001',$args),ARRAY_A):[];
         if ($wpdb->last_error || count($rows)>10000) { throw new \RuntimeException('Native observation exceeds its storage capacity.'); }
         $terms = $wpdb->get_col($wpdb->prepare("SELECT term_taxonomy_id FROM {$wpdb->term_relationships} WHERE object_id=%d ORDER BY term_taxonomy_id LIMIT 10001", $id));
@@ -604,7 +608,7 @@ final class NativeTables {
             $id=(int)$id; $actor=get_current_user_id();
             $record=self::$column_records[$id][$actor]??=Records::read($id);
             if (is_wp_error($record) || $record['object']!==$object) { return; }
-            foreach ($columns as $column) { if ($key==='vf_'.$column['field']) { echo Lists::format_value($object,$record,$column,true); } }
+        foreach ($columns as $column) { if ($key==='vf_'.$column['field']) { echo wp_kses(Lists::format_value($object,$record,$column,true), ['a' => ['href' => true]]); } }
         },10,2);
         add_action('restrict_manage_posts',static function($type,$which) use($object): void {
             if ($type!==$object || $which!=='top' || !Permissions::can('read',$object)) { return; }
@@ -634,14 +638,17 @@ final class NativeTables {
         foreach (get_post_types(['show_ui'=>true],'objects') as $slug=>$type) {
             if (!isset(Schema::objects()[$slug]) && !in_array($slug,['attachment','revision','nav_menu_item','acf-field-group','acf-field','acf-post-type','acf-taxonomy'],true)) { $types[$slug]=$type; }
         }
-        $requested=isset($_POST['vf_native_table_nonce'])?($_POST['object']??''):($_GET['object']??'');
-        $object=is_string($requested)?sanitize_key(wp_unslash($requested)):'';
         if (isset($_POST['vf_native_table_nonce'])) {
             check_admin_referer('vf_native_tables','vf_native_table_nonce');
+            $object=is_string($_POST['object']??null)?sanitize_key(wp_unslash($_POST['object'])):'';
+            // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- configure() validates exact field keys against the eligible ACF fields.
             $keys=isset($_POST['fields']) && is_array($_POST['fields'])?wp_unslash($_POST['fields']):[];
-            $allow_unique_probe=($_POST['allow_unique_probe']??'')==='1';
+            $allow_unique_probe=is_string($_POST['allow_unique_probe']??null) && sanitize_key(wp_unslash($_POST['allow_unique_probe']))==='1';
             $result=!isset($types[$object])?Rest::error('native_tables_definition','Choose an available post type.'):(isset($_POST['remove'])?self::remove($object):self::configure($object,$keys,$allow_unique_probe));
             $notice=is_wp_error($result)?$result->get_error_message():__('Table settings saved.','validated-field-for-acf');
+        } else {
+            // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Viewing the settings for a post type does not change them.
+            $object=is_string($_GET['object']??null)?sanitize_key(wp_unslash($_GET['object'])):'';
         }
         if (!isset($types[$object])) { $object=(string)array_key_first($types); }
         echo '<section id="vf-wordpress-tables" class="vf-settings-card vf-native-tables-card"><h2>'.esc_html__('WordPress tables','validated-field-for-acf').'</h2><p>'.esc_html__('Add existing ACF fields to posts, pages and custom post types. Native editors, visibility and field storage stay in place. Choose a post type to see fields that apply to all its records.','validated-field-for-acf').'</p>';

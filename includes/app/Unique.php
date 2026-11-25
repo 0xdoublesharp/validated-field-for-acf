@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Inspect and update claims on the active connection while holding uniqueness locks.
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 require_once __DIR__ . '/WorkBudget.php';
@@ -61,6 +62,7 @@ final class Unique {
         if ($wpdb->last_error) { return self::storage_error(); }
         if (count($ids) > 10000) { return WorkBudget::error(); }
         foreach ($keys as $hash => $name) {
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $owner = $wpdb->get_var($wpdb->prepare('SELECT record_id FROM ' . self::table() . ' WHERE key_hash = %s', $hash));
             if ($wpdb->last_error) { return self::storage_error(); }
             if ($owner !== null && (int) $owner !== $id) { return self::duplicate($object, $name, $id); }
@@ -161,9 +163,11 @@ final class Unique {
         ksort($keys);
         foreach ($keys as $hash => $name) {
             $previous = $wpdb->suppress_errors(true);
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $result = $wpdb->query($wpdb->prepare('INSERT INTO ' . self::table() . ' (key_hash,object_key,record_id,field_key,created_at) VALUES (%s,%s,%d,%s,%s) ON DUPLICATE KEY UPDATE key_hash=key_hash', $hash, $object, $id, $name, current_time('mysql', true)));
             $wpdb->suppress_errors($previous);
             if ($result === false) { return new \WP_Error('unique_storage', 'Unable to reserve unique value.', ['status' => 503]); }
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $owner = $wpdb->get_var($wpdb->prepare('SELECT record_id FROM ' . self::table() . ' WHERE key_hash = %s FOR UPDATE', $hash));
             if ($wpdb->last_error || $owner === null) { return self::storage_error(); }
             // A new record temporarily claims with ID zero inside its uncommitted transaction.
@@ -175,6 +179,7 @@ final class Unique {
     public static function finish(string $object, array $hashes, int $id) {
         global $wpdb;
         foreach ($hashes as $hash) { if ($wpdb->update(self::table(), ['record_id' => $id], ['key_hash' => $hash, 'object_key' => $object]) === false) { return self::storage_error(); } }
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $rows = $wpdb->get_col($wpdb->prepare('SELECT key_hash FROM ' . self::table() . ' WHERE record_id = %d AND object_key = %s', $id, $object));
         if ($wpdb->last_error) { return self::storage_error(); }
         foreach (array_diff($rows, $hashes) as $hash) { if ($wpdb->delete(self::table(), ['key_hash' => $hash, 'record_id' => $id]) === false) { return self::storage_error(); } }

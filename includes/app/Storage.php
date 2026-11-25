@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Use the active InnoDB connection for transactions, savepoints and advisory locks.
 namespace ACF_VF\App;
 defined('ABSPATH') || exit;
 require_once __DIR__ . '/WorkBudget.php';
@@ -96,6 +97,7 @@ final class Storage {
             "UPDATE $jobs SET completed_at=available_at WHERE status='failed' AND completed_at IS NULL",
             "UPDATE $audit SET bytes=OCTET_LENGTH(before_data)+OCTET_LENGTH(after_data) WHERE bytes=0",
         ];
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Internal migration literals interpolate only fixed site table names.
         foreach ($migrations as $sql) { if ($wpdb->query($sql) === false) { throw new \RuntimeException('Platform storage migration failed.'); } }
         update_option('acf_vf_app_storage_version', self::VERSION, false);
     }
@@ -126,8 +128,10 @@ final class Storage {
             }
         }
         if (!self::$depth && $wpdb->query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED') === false) { return new \WP_Error('storage_isolation', 'Read-committed transactions are required.', ['status' => 503]); }
-        $sql = self::$depth ? 'SAVEPOINT vfa_' . self::$depth : 'START TRANSACTION';
-        if ($wpdb->query($sql) === false) { return new \WP_Error('storage_transaction', 'Could not start transaction.', ['status' => 503]); }
+        $started = self::$depth
+            ? $wpdb->query($wpdb->prepare('SAVEPOINT vfa_%d', self::$depth))
+            : $wpdb->query('START TRANSACTION');
+        if ($started === false) { return new \WP_Error('storage_transaction', 'Could not start transaction.', ['status' => 503]); }
         self::$marks[] = count(self::$callbacks);
         self::$depth++;
         if (self::$depth === 1) {
@@ -171,7 +175,10 @@ final class Storage {
         global $wpdb;
         if (!self::$depth) { return false; }
         $depth = self::$depth - 1;
-        if ($wpdb->query($depth ? 'RELEASE SAVEPOINT vfa_' . $depth : 'COMMIT') === false) { self::rollback(); return false; }
+        $committed = $depth
+            ? $wpdb->query($wpdb->prepare('RELEASE SAVEPOINT vfa_%d', $depth))
+            : $wpdb->query('COMMIT');
+        if ($committed === false) { self::rollback(); return false; }
         self::$depth = $depth;
         array_pop(self::$marks);
         if (!self::$depth) {
@@ -184,7 +191,11 @@ final class Storage {
                 catch (\Throwable $error) {
                     // The database commit already succeeded; do not misreport it as a failed write.
                     // Durable audit/outbox work belongs to the precommit persisted hooks.
-                    try { do_action('acf_vf/app/operation_error', new \WP_Error('after_commit', 'A postcommit handler failed.'), 'after_commit', 0); } catch (\Throwable $ignored) { error_log('ACF application postcommit handler failed.'); }
+                    try { do_action('acf_vf/app/operation_error', new \WP_Error('after_commit', 'A postcommit handler failed.'), 'after_commit', 0); }
+                    catch (\Throwable $ignored) {
+                        // phpcs:ignore WordPress.PHP.DevelopmentFunctions.error_log_error_log -- Report only when even the production error hook fails.
+                        error_log('ACF application postcommit handler failed.');
+                    }
                 }
             }
         }
@@ -195,7 +206,8 @@ final class Storage {
         global $wpdb;
         if (!self::$depth) { return; }
         self::$depth--;
-        $wpdb->query(self::$depth ? 'ROLLBACK TO SAVEPOINT vfa_' . self::$depth : 'ROLLBACK');
+        if (self::$depth) { $wpdb->query($wpdb->prepare('ROLLBACK TO SAVEPOINT vfa_%d', self::$depth)); }
+        else { $wpdb->query('ROLLBACK'); }
         $mark = array_pop(self::$marks);
         self::$callbacks = array_slice(self::$callbacks, 0, $mark);
         foreach (self::$touched as $id => $_) { Records::flush_cache((int) $id); }

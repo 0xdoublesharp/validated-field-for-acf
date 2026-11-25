@@ -44,8 +44,7 @@ class acf_field_validated_field extends acf_field {
 	public function detect_frontend_context() {
 		// Inspect without consuming the nonce: acf_form_head() verifies it and its signed form later.
 		if ( is_admin() || wp_doing_ajax() || ( defined( 'REST_REQUEST' ) && REST_REQUEST ) ) { return; }
-		$nonce = $_POST['_acf_nonce'] ?? null;
-		if ( is_string( $nonce ) && isset( $_POST['_acf_form'] ) && function_exists( 'wp_verify_nonce' ) && wp_verify_nonce( wp_unslash( $nonce ), 'acf_form' ) ) {
+		if ( is_string( $_POST['_acf_nonce'] ?? null ) && isset( $_POST['_acf_form'] ) && function_exists( 'wp_verify_nonce' ) && wp_verify_nonce( sanitize_key( wp_unslash( $_POST['_acf_nonce'] ) ), 'acf_form' ) ) {
 			acf_set_form_data( 'vf_screen', 'acf_form' );
 		}
 	}
@@ -79,8 +78,8 @@ class acf_field_validated_field extends acf_field {
 		$native = $this->native_field( $field );
 		$native = apply_filters( 'acf/load_field/type=' . $native['type'], $native );
 		if ( ! $native ) { return false; }
-		// Native query endpoints enforce their own field-type nonce and visibility checks.
-		$action = isset( $_REQUEST['action'] ) && is_string( $_REQUEST['action'] ) ? $_REQUEST['action'] : '';
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Compare the exact action; the native endpoint verifies its nonce and permissions.
+		$action = isset( $_REQUEST['action'] ) && is_string( $_REQUEST['action'] ) ? wp_unslash( $_REQUEST['action'] ) : '';
 		$type = $native['type'];
 		if ( wp_doing_ajax() && in_array( $action, array( 'acf/fields/' . $type . '/query', 'acf/fields/' . $type . '/add_term' ), true ) ) {
 			return $native;
@@ -166,7 +165,8 @@ class acf_field_validated_field extends acf_field {
 		if ( acf_get_form_data( 'vf_rest_validation' ) ) { return $field; }
 		$screen = acf_get_form_data( 'vf_screen' );
 		if ( ! $screen && wp_doing_ajax() ) {
-			$screen = isset( $_POST['_acf_screen'] ) && is_string( $_POST['_acf_screen'] ) ? $_POST['_acf_screen'] : '';
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Native ACF AJAX checks its nonce; only the exact frontend marker is read here.
+			$screen = is_string( $_POST['_acf_screen'] ?? null ) && wp_unslash( $_POST['_acf_screen'] ) === 'acf_form' ? 'acf_form' : '';
 		}
 		if ( 'acf_form' === $screen && ! ACF_VF_Validation::is_true( get_option( 'acf_vf_frontend', true ) ) ) {
 			$field['function'] = 'none';
@@ -230,6 +230,7 @@ class acf_field_validated_field extends acf_field {
 		check_ajax_referer( 'acf-vf-settings', 'nonce' );
 		if ( ! current_user_can( acf_get_setting( 'capability' ) ) ) { wp_send_json_error( null, 403 ); }
 		$type = sanitize_key( wp_unslash( $_POST['type'] ?? '' ) );
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- The complete ACF input name is checked against the pattern below.
 		$prefix = wp_unslash( $_POST['prefix'] ?? '' );
 		$key = sanitize_key( wp_unslash( $_POST['key'] ?? '' ) );
 		if ( ! is_string( $prefix ) || ! preg_match( '/^acf_fields\[[a-zA-Z0-9_-]+\]$/D', $prefix ) || ! acf_get_field_type( $type ) || in_array( $type, array( 'validated_field', 'group', 'repeater', 'flexible_content', 'clone', 'tab', 'message', 'accordion' ), true ) ) { wp_send_json_error( null, 400 ); }
@@ -277,7 +278,7 @@ class acf_field_validated_field extends acf_field {
 	public function render_settings_sections(): void { do_action( 'acf_vf/settings_sections' ); }
 	private function render_pro_promotion(): void {
 		if ( defined( 'ACF_VF_PRO_VERSION' ) ) { return; }
-		$url = esc_url( (string) ACF_VF_PRO_UPGRADE_URL, array( 'http', 'https' ) );
+		$url = esc_url_raw( (string) ACF_VF_PRO_UPGRADE_URL, array( 'http', 'https' ) );
 		if ( $url === '' ) { return; }
 		echo '<section class="card acf-vf-pro-card" aria-labelledby="acf-vf-pro-title"><p class="vf-settings-eyebrow">VALIDATED FIELD PRO</p><h2 id="acf-vf-pro-title">' . esc_html__( 'Turn your fields into a workflow with Pro', 'validated-field-for-acf' ) . '</h2>';
 		echo '<p>' . esc_html__( 'Keep Free’s validation and input masks. Add the tools to calculate values, manage more records and automate the next step.', 'validated-field-for-acf' ) . '</p><dl>';
@@ -288,7 +289,7 @@ class acf_field_validated_field extends acf_field {
 		) as $feature => $description ) {
 			echo '<div class="vf-pro-feature"><dt><strong>' . esc_html( $feature ) . '</strong></dt><dd>' . esc_html( $description ) . '</dd></div>';
 		}
-		echo '</dl><p><a class="button button-primary" href="' . $url . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Get Validated Field Pro', 'validated-field-for-acf' ) . '<span class="screen-reader-text"> ' . esc_html__( '(opens in a new tab)', 'validated-field-for-acf' ) . '</span></a></p><h3>' . esc_html__( 'How to upgrade', 'validated-field-for-acf' ) . '</h3><ol>';
+		echo '</dl><p><a class="button button-primary" href="' . esc_url( $url, array( 'http', 'https' ) ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Get Validated Field Pro', 'validated-field-for-acf' ) . '<span class="screen-reader-text"> ' . esc_html__( '(opens in a new tab)', 'validated-field-for-acf' ) . '</span></a></p><h3>' . esc_html__( 'How to upgrade', 'validated-field-for-acf' ) . '</h3><ol>';
 		foreach ( array( __( 'Get your Pro license and download the Pro ZIP.', 'validated-field-for-acf' ), __( 'Install Pro alongside Free from Plugins → Add Plugin → Upload Plugin. Keep Free active.', 'validated-field-for-acf' ), __( 'Return to these settings and activate your license with your consent to receive updates.', 'validated-field-for-acf' ) ) as $step ) { echo '<li>' . esc_html( $step ) . '</li>'; }
 		echo '</ol><p>' . esc_html__( 'Your installed Pro features keep working when update access ends.', 'validated-field-for-acf' ) . '</p></section>';
 	}

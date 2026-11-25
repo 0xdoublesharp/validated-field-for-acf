@@ -71,7 +71,9 @@ class ACF_VF_REST {
 		if ( !$submitted ) {
 			return $result;
 		}
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Preserve the caller's globals for restoration in finally.
 		$old_post = $_POST;
+		// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Preserve the caller's globals for restoration in finally.
 		$old_request = $_REQUEST;
 		$form = acf_get_store( 'form' )->get();
 		$errors = acf()->validation->errors;
@@ -85,6 +87,7 @@ class ACF_VF_REST {
 			} else {
 				$_POST['post_status'] = 'draft';
 			}
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Mirror the synthetic ACF input built above from the authorized REST request.
 			$_REQUEST = $_POST;
 			acf_set_form_data( 'post_id', $post_id );
 			acf_set_form_data( 'vf_post_id', $post_id );

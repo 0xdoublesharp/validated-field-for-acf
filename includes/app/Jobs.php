@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Queue claims, leases and compare-and-swap writes require current private job rows.
 namespace ACF_VF\App;
 
 /** Durable outbox. Workers claim a row with a compare-and-set UPDATE. */
@@ -70,6 +71,7 @@ final class Jobs {
             global $wpdb; $table=Storage::table('jobs');
             $placeholders=implode(',',array_fill(0,count($kinds),'%s'));
             // Fence active leases too: an old worker's finish CAS must no longer match.
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- The list contains only generated %s placeholders; all job kinds are prepared.
             if ($wpdb->query($wpdb->prepare("UPDATE $table SET status='blocked',last_error='provider_missing' WHERE kind IN ($placeholders) AND status IN ('queued','retry','running')",$kinds)) !== false) {
                 foreach ($kinds as $kind) { $parked[$kind]=true; }
                 $state['kinds']=$parked;
@@ -78,10 +80,12 @@ final class Jobs {
             return;
         }
         global $wpdb; $table=Storage::table('jobs');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $pending=$wpdb->get_col("SELECT DISTINCT kind FROM $table WHERE status IN ('queued','retry','running')");
         foreach ($pending as $kind) {
             if (!isset(self::$handlers[$kind])) {
                 // Fence active leases too: an old worker's finish CAS must no longer match.
+                // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
                 $wpdb->query($wpdb->prepare("UPDATE $table SET status='blocked',last_error='provider_missing' WHERE kind=%s AND status IN ('queued','retry','running')",$kind));
             }
         }
@@ -124,6 +128,7 @@ final class Jobs {
         Storage::install();
         $table = Storage::table('jobs');
         if ($key) {
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE idempotency_key=%s", $key));
             if ($existing) { return (int) $existing; }
         }
@@ -133,6 +138,7 @@ final class Jobs {
         try { $ok = $wpdb->insert($table, ['kind' => $kind, 'payload' => $encoded, 'status' => 'queued', 'attempts' => 0, 'available_at' => gmdate('Y-m-d H:i:s', time() + (int) $delay), 'idempotency_key' => $key, 'last_error' => '', 'actor_id' => get_current_user_id(), 'payload_bytes' => strlen($encoded)]); }
         finally { $wpdb->suppress_errors($previous_errors); }
         if (!$ok && $key) {
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $existing = $wpdb->get_var($wpdb->prepare("SELECT id FROM $table WHERE idempotency_key=%s", $key));
             if ($existing) { return (int) $existing; }
         }
@@ -160,6 +166,7 @@ final class Jobs {
         $stale = gmdate('Y-m-d H:i:s', time() - 600);
         // Recover only a bounded batch, preserving a receipt for the interrupted attempt.
         $paused=get_option('acf_vf_job_provider_paused',[]);
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $expired = $wpdb->get_results($wpdb->prepare("SELECT id,kind,payload,attempts,locked_at FROM $table WHERE status='running' AND locked_at < %s ORDER BY id LIMIT 50", $stale), ARRAY_A);
         foreach ($expired as $lease) {
             $data = json_decode($lease['payload'], true) ?: [];
@@ -173,13 +180,16 @@ final class Jobs {
             finally { $wpdb->suppress_errors($previous_errors); }
         }
         self::park_unavailable();
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $ids = $wpdb->get_col($wpdb->prepare("SELECT id FROM $table WHERE status IN ('queued','retry') AND available_at <= %s AND attempts < %d ORDER BY id LIMIT %d", $now, self::MAX_ATTEMPTS, max(1, min(50, $limit))));
         $results = [];
         foreach ($ids as $id) {
             // Leave unclaimed work untouched once the shared request allowance is spent.
             if (!WorkBudget::consume(1)) { break; }
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $claimed = $wpdb->query($wpdb->prepare("UPDATE $table SET status='running',locked_at=%s,attempts=attempts+1 WHERE id=%d AND status IN ('queued','retry') AND available_at <= %s", $now, $id, $now));
             if ($claimed !== 1) { continue; }
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $job = $wpdb->get_row($wpdb->prepare("SELECT * FROM $table WHERE id=%d", $id), ARRAY_A);
             $payload = json_decode($job['payload'], true);
             $previous_user = get_current_user_id();
@@ -204,11 +214,13 @@ final class Jobs {
                 if (WorkBudget::exhausted() && $results) {
                     // Earlier jobs spent the shared allowance; this job is not at fault, so undo its claim.
                     // The first job in a batch had the whole allowance and keeps its attempt.
+                    // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
                     $wpdb->query($wpdb->prepare("UPDATE $table SET status=%s,locked_at=NULL,attempts=attempts-1 WHERE id=%d AND status='running' AND locked_at=%s AND attempts=%d", (int) $job['attempts'] > 1 ? 'retry' : 'queued', $id, $now, $job['attempts']));
                     wp_set_current_user($previous_user);
                     $results[(int) $id] = 'deferred';
                     break;
                 }
+                // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
                 $current = $wpdb->get_var($wpdb->prepare("SELECT status FROM $table WHERE id=%d AND attempts=%d", $id, $job['attempts']));
                 $committed = $current === 'completed';
                 $status = $committed ? 'completed' : ($current === 'blocked' ? 'blocked' : ((int) $job['attempts'] >= self::MAX_ATTEMPTS ? 'failed' : 'retry'));
@@ -239,7 +251,9 @@ final class Jobs {
         $table = Storage::table('jobs');
         $limit = max(1, min(100, (int) ($args['per_page'] ?? 20)));
         $page = max(1, (int) ($args['page'] ?? 1));
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $rows = $wpdb->get_results($wpdb->prepare("SELECT id,kind,status,attempts,available_at,locked_at,completed_at,last_error FROM $table ORDER BY id DESC LIMIT %d OFFSET %d", $limit, ($page - 1) * $limit), ARRAY_A);
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         return ['items' => $rows, 'total' => (int) $wpdb->get_var("SELECT COUNT(*) FROM $table"), 'page' => $page, 'per_page' => $limit];
     }
 
@@ -248,6 +262,7 @@ final class Jobs {
         if (!current_user_can('manage_options')) { return new \WP_Error('forbidden', 'Job administration requires manage_options.'); }
         Storage::install();
         $table = Storage::table('jobs');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $payload = json_decode((string) $wpdb->get_var($wpdb->prepare("SELECT payload FROM $table WHERE id=%d", $id)), true);
         return $payload['_history'] ?? [];
     }
@@ -257,8 +272,10 @@ final class Jobs {
         if (!current_user_can('manage_options')) { return new \WP_Error('forbidden', 'Job administration requires manage_options.'); }
         Storage::install();
         $table = Storage::table('jobs');
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $kind=$wpdb->get_var($wpdb->prepare("SELECT kind FROM $table WHERE id=%d",$id));
         if (!isset(self::$handlers[$kind])) { return new \WP_Error('vf_provider_missing','Restore the job provider before retrying.',['status'=>409]); }
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $retried=1 === $wpdb->query($wpdb->prepare("UPDATE $table SET status='queued',attempts=0,available_at=%s,locked_at=NULL,completed_at=NULL WHERE id=%d AND status IN ('failed','retry','blocked')", gmdate('Y-m-d H:i:s'), $id));
         if ($retried) { self::invalidate_parking($kind,true); }
         return $retried;

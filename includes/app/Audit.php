@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the private audit table within the record transaction.
 namespace ACF_VF\App;
 
 /** Privileged, dynamically field-filtered history; restores use the normal write path. */
@@ -32,6 +33,7 @@ final class Audit {
         $object = get_post_type($id);
         $permission_id = $id;
         if (!$object) {
+            // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
             $object = $wpdb->get_var($wpdb->prepare("SELECT object_key FROM $table WHERE record_id=%d ORDER BY id DESC LIMIT 1", $id));
             $permission_id = 0;
             if (!$object || !self::deleted_access($object)) { return new \WP_Error('forbidden', 'Audit history is unavailable.'); }
@@ -39,6 +41,7 @@ final class Audit {
         if (!current_user_can('manage_options') || !Permissions::can('read', $object, $permission_id)) { return new \WP_Error('forbidden', 'Audit history is unavailable.'); }
         $limit = max(1, min(100, (int) ($args['per_page'] ?? 20)));
         $page = max(1, (int) ($args['page'] ?? 1));
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         $rows = $wpdb->get_results($wpdb->prepare("SELECT * FROM $table WHERE record_id=%d ORDER BY id DESC LIMIT %d OFFSET %d", $id, $limit, ($page - 1) * $limit), ARRAY_A);
         foreach ($rows as &$row) {
             foreach (['before_data', 'after_data'] as $side) {
@@ -48,6 +51,7 @@ final class Audit {
             }
         }
         unset($row);
+        // phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- Only a fixed site table name is interpolated; any data values are prepared.
         return ['items' => $rows, 'total' => (int) $wpdb->get_var($wpdb->prepare("SELECT COUNT(*) FROM $table WHERE record_id=%d", $id)), 'page' => $page, 'per_page' => $limit];
     }
 

@@ -18,12 +18,14 @@ final class ConfigurationPage {
     public static function download(): void {
         if (!current_user_can('manage_options')) { wp_die(esc_html__('Administrator access required.', 'validated-field-for-acf'), '', ['response'=>403]); }
         check_admin_referer('vf_configuration_export');
-        $types = ($_POST['vf_export_kind'] ?? '') === 'client_types';
+        $types = is_string($_POST['vf_export_kind'] ?? null) && sanitize_key(wp_unslash($_POST['vf_export_kind'])) === 'client_types';
         $result = $types ? Admin::dispatch('client_types', []) : Migrations::export();
         if (is_wp_error($result)) { wp_die(esc_html($result->get_error_message()), '', ['response'=>403]); }
         nocache_headers();
         header('Content-Type: ' . ($types ? 'text/plain; charset=utf-8' : 'application/json; charset=utf-8'));
         header('Content-Disposition: attachment; filename="' . ($types ? 'validated-field.d.ts' : 'vf-configuration.json') . '"');
+        header('X-Content-Type-Options: nosniff');
+        // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- Send the original TypeScript or JSON as an attachment.
         echo $types ? $result['content'] : wp_json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
         exit;
     }
@@ -32,7 +34,7 @@ final class ConfigurationPage {
     public static function submit(array $post, array $files = []): array {
         $state = ['source'=>'', 'plan'=>null, 'error'=>'', 'applied'=>false];
         if (!current_user_can('manage_options')) { $state['error']='Administrator access required.'; return $state; }
-        if (!is_string($post['vf_transfer_nonce'] ?? null) || !wp_verify_nonce($post['vf_transfer_nonce'], 'vf_configuration_transfer')) { $state['error']='Your session could not be verified. Reload the page and try again.'; return $state; }
+        if (!is_string($post['vf_transfer_nonce'] ?? null) || !wp_verify_nonce(sanitize_key(wp_unslash($post['vf_transfer_nonce'])), 'vf_configuration_transfer')) { $state['error']='Your session could not be verified. Reload the page and try again.'; return $state; }
         if (!Extensions::has('configuration.apply')) { $state['error']='Install and activate Validated Field Pro to import configuration.'; return $state; }
         $action = $post['vf_transfer_action'] ?? '';
         if (!in_array($action, ['review','apply','edit'], true)) { $state['error']='Choose a transfer action.'; return $state; }
@@ -65,6 +67,7 @@ final class ConfigurationPage {
 
     public static function render(): void {
         if (!current_user_can('manage_options')) { wp_die(esc_html__('Administrator access required.', 'validated-field-for-acf'), '', ['response'=>403]); }
+        // phpcs:ignore WordPress.Security.NonceVerification.Missing -- submit() verifies the nonce before processing the form or file.
         $state = isset($_POST['vf_transfer_action']) ? self::submit($_POST, $_FILES) : ['source'=>'','plan'=>null,'error'=>'','applied'=>false];
         $configuration = Migrations::export();
         $pro = Extensions::has('configuration.apply');
@@ -76,7 +79,11 @@ final class ConfigurationPage {
             <?php if ($state['applied']) { ?><div class="notice notice-success" role="status"><p>Configuration applied. Your existing records have been preserved.</p></div><?php } ?>
             <div class="vf-settings-grid">
                 <section class="vf-settings-card"><h2>Export configuration</h2><p>Download object definitions, fields, validation rules and access settings as a JSON file. Record values, license credentials and webhook signing secrets are not included. Set webhook signing secrets on the destination site before importing.</p>
-                    <?php if ($configuration['objects']) { ?><ul class="vf-transfer-objects"><?php foreach ($configuration['objects'] as $slug=>$object) { ?><li><strong><?php echo esc_html($object['label'] ?? $slug); ?></strong><span><?php echo esc_html(sprintf(_n('%s field','%s fields',count($object['fields'] ?? []),'validated-field-for-acf'),number_format_i18n(count($object['fields'] ?? [])))); ?></span></li><?php } ?></ul><?php } else { ?><p class="vf-settings-muted">No managed objects yet. Create an object in the workspace to include it in your export.</p><?php } ?>
+                    <?php if ($configuration['objects']) { ?><ul class="vf-transfer-objects"><?php foreach ($configuration['objects'] as $slug=>$object) {
+                        $field_count = count($object['fields'] ?? []);
+                        /* translators: %s: Number of fields in the object. */
+                        $field_count_text = sprintf(_n('%s field', '%s fields', $field_count, 'validated-field-for-acf'), number_format_i18n($field_count));
+                        ?><li><strong><?php echo esc_html($object['label'] ?? $slug); ?></strong><span><?php echo esc_html($field_count_text); ?></span></li><?php } ?></ul><?php } else { ?><p class="vf-settings-muted">No managed objects yet. Create an object in the workspace to include it in your export.</p><?php } ?>
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="acf_vf_configuration_export"><?php wp_nonce_field('vf_configuration_export'); ?><button class="button button-primary" type="submit">Download configuration</button><?php if (Extensions::has('headless.types')) { ?> <button class="button" type="submit" name="vf_export_kind" value="client_types">Download client types</button><?php } ?></form>
                 </section>
                 <section class="vf-settings-card"><h2>Import configuration</h2>

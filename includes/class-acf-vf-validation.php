@@ -1,4 +1,5 @@
 <?php
+// phpcs:disable WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Uniqueness scans require fresh metadata and connection-scoped advisory locks.
 
 /** Extra validation for native ACF fields wrapped by Validated Field. */
 class ACF_VF_Validation {
@@ -177,8 +178,11 @@ class ACF_VF_Validation {
 			return $authoritative;
 		}
 		foreach ( array( '_acf_post_id', 'post_ID', 'post_id' ) as $key ) {
+			// phpcs:ignore WordPress.Security.NonceVerification.Missing -- ACF's request context is used only when there is no authoritative save target.
 			if ( isset( $_POST[$key] ) && is_scalar( $_POST[$key] ) && $_POST[$key] !== '' ) {
-				return (string) $_POST[$key] === '0' ? 0 : acf_get_valid_post_id( wp_unslash( $_POST[$key] ) );
+				// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- ACF validates the object ID, which may be a string such as user_12.
+				$id = wp_unslash( $_POST[$key] );
+				return (string) $id === '0' ? 0 : acf_get_valid_post_id( $id );
 			}
 		}
 		$id = acf_get_form_data( 'post_id' );
@@ -221,7 +225,7 @@ class ACF_VF_Validation {
 				self::previous( $post_id, $entry['name'] );
 				self::previous( $post_id, $entry['save_name'] );
 			}
-			foreach ( isset( $_POST['acf'] ) ? (array) $_POST['acf'] : array() as $key => $value ) {
+			foreach ( array_keys( self::posted_fields() ) as $key ) {
 				$field = acf_get_field( $key );
 				if ( $field ) {
 					self::previous( $post_id, $field['name'] );
@@ -260,13 +264,18 @@ class ACF_VF_Validation {
 
 	public static function submitted_entries( $submitted = null, $post_id = null ) {
 		if ( null === $submitted ) {
-			$submitted = isset( $_POST['acf'] ) ? wp_unslash( $_POST['acf'] ) : array();
+			$submitted = self::posted_fields();
 		}
 		$entries = array();
 		self::$submitted_rows = array();
 		self::$deleted_rows = array();
 		self::walk( (array)$submitted, '', 'acf', array(), $entries, $post_id, '', '' );
 		return $entries;
+	}
+
+	private static function posted_fields(): array {
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- ACF's save or the REST bridge authorizes the request. Validation must see the original field values.
+		return isset( $_POST['acf'] ) ? (array) wp_unslash( $_POST['acf'] ) : array();
 	}
 
 	private static function walk( $values, $prefix, $input, $parts, &$entries, $post_id, $previous_prefix, $save_prefix ) {
@@ -466,12 +475,14 @@ class ACF_VF_Validation {
 		if ( self::is_true( isset( $field['read_only'] ) ? $field['read_only'] : false ) && self::comparable( $value ) !== self::comparable( $readonly_previous ) ) {
 			return __( 'This field is read only.', 'validated-field-for-acf' );
 		}
-		$status = isset( $_POST['post_status'] ) && is_scalar( $_POST['post_status'] ) ? sanitize_key( $_POST['post_status'] ) : get_post_status( $post_id );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- ACF validates the request; this value is a status hint and is overridden during an authoritative save.
+		$status = isset( $_POST['post_status'] ) && is_scalar( $_POST['post_status'] ) ? sanitize_key( wp_unslash( $_POST['post_status'] ) ) : get_post_status( $post_id );
 		$actual_save = self::$save_post_id !== null && (string) self::$save_post_id === (string) $post_id;
 		$server_id = acf_get_form_data( 'vf_post_id' );
 		$server_context = $server_id !== false && $server_id !== null && (string) $server_id === (string) $post_id && !acf_get_form_data( 'vf_rest_validation' );
 		if ( $actual_save || $server_context ) {
 			$status = get_post_status( $post_id ) ?: $status;
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- Read the publish intent from the validated ACF request.
 		} elseif ( isset( $_POST['publish'] ) ) {
 			$status = 'publish';
 		}
@@ -494,9 +505,13 @@ class ACF_VF_Validation {
 				if ( strlen( $pattern ) > 4096 || strlen( $subject ) > 65536 ) { return __( 'The value exceeds the validation processing limit.', 'validated-field-for-acf' ); }
 				$backtrack = ini_get( 'pcre.backtrack_limit' ); $recursion = ini_get( 'pcre.recursion_limit' );
 				try {
+					// phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- Bound both PCRE limits for this validation only.
 					if ( ini_set( 'pcre.backtrack_limit', (string)min( (int)$backtrack, 100000 ) ) === false || ini_set( 'pcre.recursion_limit', (string)min( (int)$recursion, 1000 ) ) === false ) { return __( 'Regex validation could not be bounded.', 'validated-field-for-acf' ); }
 					$matched = @preg_match( self::regex_pattern( $pattern ), $subject );
-				} finally { ini_set( 'pcre.backtrack_limit', $backtrack ); ini_set( 'pcre.recursion_limit', $recursion ); }
+				} finally {
+					// phpcs:ignore Squiz.PHP.DiscouragedFunctions.Discouraged -- Restore both original PCRE limits.
+					ini_set( 'pcre.backtrack_limit', $backtrack ); ini_set( 'pcre.recursion_limit', $recursion );
+				}
 				if ( 1 !== $matched ) {
 					return $message;
 				}
@@ -504,7 +519,7 @@ class ACF_VF_Validation {
 				if ( !self::php_approved( $field ) ) { return __( 'PHP validation requires approval by a code administrator.', 'validated-field-for-acf' ); }
 				$inputs = array();
 				// Keep the legacy top-level aggregate entries alongside resolved leaves.
-				$submitted = isset( $_POST['acf'] ) ? (array) wp_unslash( $_POST['acf'] ) : array();
+				$submitted = self::posted_fields();
 				foreach ( $submitted as $key => $submitted_value ) {
 					$input_field = acf_get_field( $key );
 					if ( !$input_field ) {
@@ -520,6 +535,7 @@ class ACF_VF_Validation {
 				}
 				try {
 					$run = static function ( $code, $value, $prev_value, $inputs, $post_id, $post_type, $this_key, $name, &$message ) {
+						// phpcs:ignore Generic.PHP.ForbiddenFunctions.Found -- Runs only site-signed code approved by a code administrator or code explicitly trusted by a local PHP filter.
 						return eval( $code . "\n;return true;" );
 					};
 					$result = $run( $pattern, $value, $previous, $inputs, $post_id, ( get_post_type( $post_id ) ?: acf_get_form_data( 'post_type' ) ), $name, $name, $message );
@@ -658,11 +674,13 @@ class ACF_VF_Validation {
 			$replaced[$item['name']] = true;
 		}
 		$last = 0;
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized, WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- REQUEST_TIME_FLOAT is a server-generated timestamp, not a header.
 		$request = class_exists( '\\ACF_VF\\App\\WorkBudget' ) ? \ACF_VF\App\WorkBudget::request_id() : (string)( $_SERVER['REQUEST_TIME_FLOAT'] ?? '' );
 		if ( self::$unique_request !== $request ) { self::$unique_request = $request; self::$unique_work = 0; }
 		do {
 			if ( self::$unique_work >= 10000 ) { return null; }
 			$sql = "SELECT m.$pk AS cursor_id," . ( $owner ? "m.$owner" : "0" ) . " AS owner_id,m.$key AS meta_name,m.$val AS stored FROM $table m$join WHERE " . implode( ' AND ', $where ) . " AND m.$pk>%d ORDER BY m.$pk LIMIT 250";
+			// phpcs:ignore PluginCheck.Security.DirectDB.UnescapedDBParameter, WordPress.DB.PreparedSQL.NotPrepared -- Table and column names are fixed per metadata type; values and the cursor are prepared.
 			$rows = $wpdb->get_results( $wpdb->prepare( $sql, array_merge( $args, array( $last ) ) ) );
 			if ( $wpdb->last_error ) { return null; }
 			self::$unique_work += count( $rows );

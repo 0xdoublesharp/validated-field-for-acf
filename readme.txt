@@ -1,9 +1,9 @@
-=== Advanced Custom Fields: Validated Field ===
+=== Validated Field for ACF ===
 Contributors: doublesharp
 Tags: acf, validation, input masks, uniqueness, tables
 Requires at least: 6.0
 Requires PHP: 8.0
-Tested up to: 6.7
+Tested up to: 7.2
 Stable tag: 2.0.0
 License: GPLv2 or later
 License URI: http://www.gnu.org/licenses/gpl-2.0.html

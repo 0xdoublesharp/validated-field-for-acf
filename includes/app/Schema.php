@@ -251,6 +251,7 @@ final class Schema {
         if (!self::managed_object($object) && NativeTables::enabled($object)) { return NativeTables::assert_current($object); }
         global $wpdb;
         $cached = self::objects();
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the schema option atomically while holding the configuration lock.
         $raw = maybe_unserialize($wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s", 'acf_vf_objects')));
         if (!is_array($raw) || !isset($cached[$object], $raw[$object])) { return self::error('schema_conflict', 'Configuration changed. Reload and retry.', 409); }
         foreach ($raw as &$definition) { if (is_array($definition) && !isset($definition['_revision'])) { $definition['_revision'] = self::revision($definition); } }
@@ -316,6 +317,7 @@ final class Schema {
             $all_keys = array_merge($all_keys, $keys);
         }
         global $wpdb;
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the schema option atomically while holding the configuration lock.
         $stored = $wpdb->get_var($wpdb->prepare("SELECT option_value FROM {$wpdb->options} WHERE option_name=%s", 'acf_vf_objects'));
         $before = $stored === null ? [] : maybe_unserialize($stored);
         if (!is_array($before)) { return self::error('schema_storage', 'Stored configuration is invalid.', 500); }
@@ -334,9 +336,11 @@ final class Schema {
         $serialized = maybe_serialize($normalized);
         if ($stored === null) {
             $previous = $wpdb->suppress_errors(true);
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the schema option atomically while holding the configuration lock.
             $changed = $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->options} (option_name,option_value,autoload) VALUES (%s,%s,%s)", 'acf_vf_objects', $serialized, 'no'));
             $wpdb->suppress_errors($previous);
         } elseif ($stored === $serialized) { return true; }
+        // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the schema option atomically while holding the configuration lock.
         else { $changed = $wpdb->query($wpdb->prepare("UPDATE {$wpdb->options} SET option_value=%s WHERE option_name=%s AND BINARY option_value=BINARY %s", $serialized, 'acf_vf_objects', $stored)); }
         if ($changed !== 1) { return self::error('schema_conflict', 'Configuration changed or could not be saved.', 409); }
         wp_cache_delete('acf_vf_objects', 'options'); wp_cache_delete('alloptions', 'options'); wp_cache_delete('notoptions', 'options');
@@ -363,6 +367,7 @@ final class Schema {
         global $wpdb;
         $object = $before['slug'] ?? '';
         if (isset($wpdb->posts) && is_string($object) && $object !== '') {
+            // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Read and write the schema option atomically while holding the configuration lock.
             $id = $wpdb->get_var($wpdb->prepare("SELECT ID FROM {$wpdb->posts} WHERE post_type=%s AND post_status <> 'auto-draft' LIMIT 1", $object));
             if ($id === null && empty($wpdb->last_error)) { return true; }
         }

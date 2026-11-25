@@ -43,6 +43,7 @@ final class NativeGuard {
             global $wpdb;
             $types = array_keys(Schema::objects());
             $placeholders = implode(',', array_fill(0, count($types), '%s'));
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.PreparedSQLPlaceholders.UnfinishedPrepare -- Only generated %s placeholders vary; all managed post types are prepared.
             $exclude = $wpdb->prepare("NOT EXISTS (SELECT 1 FROM {$wpdb->posts} vf_guard_post WHERE vf_guard_post.ID={$wpdb->comments}.comment_post_ID AND vf_guard_post.post_type IN ($placeholders))", $types);
             $clauses['where'] = '(' . ($clauses['where'] ?: '1=1') . ') AND ' . $exclude;
             return $clauses;
@@ -55,13 +56,16 @@ final class NativeGuard {
         add_action('load-edit.php', [__CLASS__, 'redirect_list']);
     }
     public static function redirect_list(): void {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Redirecting the native list is read-only.
         $type = isset($_GET['post_type']) && is_string($_GET['post_type']) ? sanitize_key(wp_unslash($_GET['post_type'])) : 'post';
         if (!Schema::managed_object($type)) { return; }
         wp_safe_redirect(admin_url('admin.php?page=validated-field-workspace&object=' . rawurlencode($type))); exit;
     }
     public static function redirect_editor(): void {
-        $id = isset($_GET['post']) ? absint($_GET['post']) : 0;
-        $type = $id ? get_post_type($id) : sanitize_key($_GET['post_type'] ?? 'post');
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Redirecting the native editor does not change a record.
+        $id = is_string($_GET['post'] ?? null) ? absint(wp_unslash($_GET['post'])) : 0;
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- Read-only destination parameter.
+        $type = $id ? get_post_type($id) : (is_string($_GET['post_type'] ?? null) ? sanitize_key(wp_unslash($_GET['post_type'])) : 'post');
         if (Schema::managed_object((string) $type)) {
             wp_safe_redirect(admin_url('admin.php?page=validated-field-workspace' . ($id ? '&record=' . $id : '&object=' . rawurlencode($type)))); exit;
         }
@@ -81,6 +85,7 @@ final class NativeGuard {
             if ($types) {
                 $placeholders = implode(',', array_fill(0, count($types), '%s'));
                 $sql = "SELECT 1 FROM {$wpdb->postmeta} m JOIN {$wpdb->posts} p ON p.ID=m.post_id WHERE m.meta_key=%s AND p.post_type IN ($placeholders) LIMIT 1";
+                // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Only generated %s placeholders vary; the metadata key and all types are prepared.
                 if ($wpdb->get_var($wpdb->prepare($sql, array_merge([$key], $types)))) { return false; }
             }
         }

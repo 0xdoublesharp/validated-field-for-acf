@@ -56,7 +56,7 @@ final class Lists {
             foreach ($configured as $column) {
                 if ('vf_' . $column['field'] !== $key) { continue; }
                 echo '<span class="vf-list-value" data-record-id="' . esc_attr($id) . '" data-version="' . esc_attr($record['version']) . '" data-field="' . esc_attr($column['field']) . '" data-editable="' . ($column['editable'] && Permissions::can('update', $object, (int)$id, $column['field']) ? '1' : '0') . '">';
-                echo self::format_value($object, $record, $column, true); // Escaped by formatter.
+                echo wp_kses(self::format_value($object, $record, $column, true), ['a' => ['href' => true]]);
                 echo '</span>';
             }
         }, 10, 2);
@@ -64,7 +64,9 @@ final class Lists {
         add_filter('views_edit-' . $object, static function ($views) use ($object) {
             $result = Query::run($object, ['per_page' => 1]);
             if (is_wp_error($result)) { return []; }
-            return ['all' => '<a href="' . esc_url(admin_url('edit.php?post_type=' . $object)) . '">' . esc_html(sprintf(__('All (%s)', 'validated-field-for-acf'), number_format_i18n($result['total']))) . '</a>'];
+            /* translators: %s: Number of records visible to the current user. */
+            $label = sprintf(__('All (%s)', 'validated-field-for-acf'), number_format_i18n($result['total']));
+            return ['all' => '<a href="' . esc_url(admin_url('edit.php?post_type=' . $object)) . '">' . esc_html($label) . '</a>'];
         });
     }
 
@@ -344,7 +346,10 @@ final class Lists {
         echo '</style>';
     }
     public static function native_notice(): void { if (self::$notice !== '') { echo '<div class="notice notice-error" role="alert"><p>' . esc_html(self::$notice) . '</p></div>'; } }
-    private static function request(string $key): string { return isset($_GET[$key]) && is_string($_GET[$key]) ? wp_unslash($_GET[$key]) : ''; }
+    private static function request(string $key): string {
+        // phpcs:ignore WordPress.Security.NonceVerification.Recommended, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- Read-only list filters validate operators and fields downstream and preserve literal search values.
+        return isset($_GET[$key]) && is_string($_GET[$key]) ? wp_unslash($_GET[$key]) : '';
+    }
     private static function and_filter(array $filters, array $leaf): array {
         if (isset($filters['relation'])) { return ['relation'=>'AND', 'conditions'=>[$filters,$leaf]]; }
         $filters[] = $leaf;

@@ -1,6 +1,6 @@
 <?php
 /*
-Plugin Name: Advanced Custom Fields: Validated Field
+Plugin Name: Validated Field for ACF
 Plugin URI: https://validated-field.doublesharp.com/
 Description: Server-side validation, input masks, and a records workspace for Advanced Custom Fields.
 Author: Justin Silver
@@ -42,6 +42,7 @@ function include_acf_validated_field() {
 add_action( 'acf/include_field_types', 'include_acf_validated_field' );
 
 function load_textdomain_acf_vf() {
+	// phpcs:ignore PluginCheck.CodeAnalysis.DiscouragedFunctions.load_plugin_textdomainFound -- Local ZIP installs also ship translations.
 	load_plugin_textdomain( 'validated-field-for-acf', false, dirname( plugin_basename( __FILE__ ) ) . '/languages/' );
 }
 add_action( 'init', 'load_textdomain_acf_vf', 5 );
