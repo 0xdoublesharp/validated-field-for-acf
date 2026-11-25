@@ -559,16 +559,16 @@
         el("div", { class: "vf-empty" }, [
           el("h2", { text: "Build your first object" }),
           el("p", {
-            text: "An object holds a collection of records, such as Accounts, Contacts, or Projects.",
+            text: "An object defines a type of record, such as a contact or project.",
           }),
           config.configure
             ? el("div", { class: "vf-empty-actions" }, [
                 button("Create an object", safe(() => designer()), true),
-                el("a", { class: "vf-button", href: "options-general.php?page=acf-validated-field#vf-wordpress-tables", text: "Connect an existing CPT" }),
+                el("a", { class: "vf-button", href: "options-general.php?page=acf-validated-field#vf-wordpress-tables", text: "Set up a table for existing content" }),
                 ...starterTemplates.map(template => button(`Start with ${template.label}`, safe(() => designer("", template)))),
               ])
             : el("p", {
-                text: "Ask an administrator to configure objects for this workspace.",
+                text: "Ask an administrator to add an object or set up a table.",
               }),
         ]),
       );
@@ -852,8 +852,8 @@
       }),
     );
     const empty = el("div", { class: "vf-empty vf-results-empty" }, [
-      el("h2", { text: "No records match this view." }),
-      el("p", { text: state.query.search ? `No results for “${state.query.search}”. Try another search or clear it to return to your records.` : "Try adjusting the filters to see more records." }),
+      el("h2", { text: "No records to show" }),
+      el("p", { text: state.query.search ? `No results for “${state.query.search}”. Try a different search or clear it.` : "If you have filters set, adjust them to show more records." }),
       state.query.search ? button("Clear search", navigationAction(async () => {
         state.query.search = ""; state.query.page = 1;
         const intent = beginTable(current);
@@ -926,7 +926,7 @@
       for (const type of ["input", "change"]) control.node.addEventListener(type, () => changed.add(name));
       body.append(label(field.label || name, control.node));
     });
-    body.append(el("p", { class: "vf-help", text: "Every value is validated before saving. Use the full record form for media, choices and structured fields." }));
+    body.append(el("p", { class: "vf-help", text: "Use the full record form for media, choice fields, relationships, and grouped fields." }));
     openDialog("Quick Add", body, mutation(async ({ request }) => {
       const fields = Object.fromEntries([...changed].map(name => [name, controls[name].read()]));
       return request("quick_add", { object: state.object.slug, payload: { title: title.value, fields } });
@@ -1051,7 +1051,7 @@
         })
         .catch((error) => {
           if (current !== generation || !ownsField()) return;
-          feedback.textContent = "Records could not load. Selected records are kept.";
+          feedback.textContent = "Could not load choices. Your selections are still in the form.";
           notify(error.message, true);
         });
       };
@@ -1470,7 +1470,7 @@
     body.append(
       el("p", {
         class: "vf-help",
-        text: "Match all filters. Use comma-separated values for “one of” and “between”.",
+        text: "Records must match every filter. Separate choices or range limits with commas.",
       }),
       rows,
       button("+ Add filter", () => add()),
@@ -1505,7 +1505,7 @@
       row.read = () => visible.checked ? { field: column.field, ...(width.value ? { width: width.value } : {}) } : null;
       rows.append(row);
     }
-    const body = el("div", {}, [el("p", { class: "vf-help", text: "Choose your columns, their order and widths. Drag table headers to reorder, or use these arrow buttons." }), rows, label("Keep table headers visible while scrolling", sticky)]);
+    const body = el("div", {}, [el("p", { class: "vf-help", text: "Choose the columns to show and set their widths. Use the move buttons or drag the column headers to reorder them." }), rows, label("Keep table headers visible while scrolling", sticky)]);
     if (config.configure) body.append(button("Site column defaults", siteColumnsDialog));
     openDialog("Your columns", body, mutation(operation => writePersonalColumns([...rows.children].map(row => row.read()).filter(Boolean), sticky.checked, operation), applyPersonalColumns, true));
   }
@@ -1632,7 +1632,7 @@
     if (!items.length)
       body.append(
         el("p", {
-          text: "No background jobs yet. Jobs run using WordPress cron.",
+          text: "No background jobs yet. WordPress cron runs queued jobs.",
         }),
       );
     items.forEach((job) =>

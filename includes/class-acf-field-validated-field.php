@@ -265,7 +265,7 @@ class acf_field_validated_field extends acf_field {
 	}
 	public function settings_page() {
 		if ( ! current_user_can( 'manage_options' ) ) { return; }
-		echo '<div class="wrap vf-settings"><header class="vf-settings-header"><div><p class="vf-settings-eyebrow">' . esc_html__( 'SETUP & UPDATES', 'validated-field-for-acf' ) . '</p><h1>' . esc_html__( 'Validated Field', 'validated-field-for-acf' ) . '</h1><p>' . esc_html__( 'Clean data. Smoother workflows. Built around your fields.', 'validated-field-for-acf' ) . '</p></div><span class="vf-edition-badge">' . esc_html( defined( 'ACF_VF_PRO_VERSION' ) ? 'PRO' : 'FREE' ) . '</span></header><div class="vf-settings-grid"><section class="vf-settings-card"><h2>' . esc_html__( 'General settings', 'validated-field-for-acf' ) . '</h2><p class="vf-settings-muted">' . esc_html__( 'Choose where your validation runs.', 'validated-field-for-acf' ) . '</p><form action="options.php" method="post">';
+		echo '<div class="wrap vf-settings"><header class="vf-settings-header"><div><p class="vf-settings-eyebrow">' . esc_html__( 'SETUP & UPDATES', 'validated-field-for-acf' ) . '</p><h1>' . esc_html__( 'Validated Field', 'validated-field-for-acf' ) . '</h1><p>' . esc_html__( 'Configure validation and tables for your WordPress content.', 'validated-field-for-acf' ) . '</p></div><span class="vf-edition-badge">' . esc_html( defined( 'ACF_VF_PRO_VERSION' ) ? 'PRO' : 'FREE' ) . '</span></header><div class="vf-settings-grid"><section class="vf-settings-card"><h2>' . esc_html__( 'General settings', 'validated-field-for-acf' ) . '</h2><p class="vf-settings-muted">' . esc_html__( 'Set the defaults for draft validation and front-end ACF forms.', 'validated-field-for-acf' ) . '</p><form action="options.php" method="post">';
 		settings_fields( 'acf_vf' );
 		foreach ( array( 'acf_vf_drafts' => __( 'Validate drafts globally', 'validated-field-for-acf' ), 'acf_vf_frontend' => __( 'Validate acf_form() submissions', 'validated-field-for-acf' ), 'acf_vf_frontend_css' => __( 'Load ACF form admin colors', 'validated-field-for-acf' ), 'acf_vf_debug' => __( 'Debug mode (legacy setting)', 'validated-field-for-acf' ) ) as $name => $label ) {
 			echo '<p><label><input type="hidden" name="' . esc_attr( $name ) . '" value="0"><input type="checkbox" name="' . esc_attr( $name ) . '" value="1" ' . checked( ACF_VF_Validation::is_true( get_option( $name, $name !== 'acf_vf_debug' ) ), true, false ) . '> ' . esc_html( $label ) . '</label></p>';
@@ -280,17 +280,17 @@ class acf_field_validated_field extends acf_field {
 		if ( defined( 'ACF_VF_PRO_VERSION' ) ) { return; }
 		$url = esc_url_raw( (string) ACF_VF_PRO_UPGRADE_URL, array( 'http', 'https' ) );
 		if ( $url === '' ) { return; }
-		echo '<section class="card acf-vf-pro-card" aria-labelledby="acf-vf-pro-title"><p class="vf-settings-eyebrow">VALIDATED FIELD PRO</p><h2 id="acf-vf-pro-title">' . esc_html__( 'Turn your fields into a workflow with Pro', 'validated-field-for-acf' ) . '</h2>';
-		echo '<p>' . esc_html__( 'Keep Free’s validation and input masks. Add the tools to calculate values, manage more records and automate the next step.', 'validated-field-for-acf' ) . '</p><dl>';
+		echo '<section class="card acf-vf-pro-card" aria-labelledby="acf-vf-pro-title"><p class="vf-settings-eyebrow">VALIDATED FIELD PRO</p><h2 id="acf-vf-pro-title">' . esc_html__( 'Calculations, approvals, and advanced tables', 'validated-field-for-acf' ) . '</h2>';
+		echo '<p>' . esc_html__( 'Install Pro alongside Free to add calculations, automation, and advanced editing.', 'validated-field-for-acf' ) . '</p><dl>';
 		foreach ( array(
-			__( 'Calculations that stay in sync', 'validated-field-for-acf' ) => __( 'Use formulas and rollups to calculate totals and summarize related records.', 'validated-field-for-acf' ),
-			__( 'Workflows that move work forward', 'validated-field-for-acf' ) => __( 'Run actions in the background and add approval rules to your processes.', 'validated-field-for-acf' ),
-			__( 'Tables built for real work', 'validated-field-for-acf' ) => __( 'Save views, use advanced filters, edit in bulk, import records and run background exports.', 'validated-field-for-acf' ),
+			__( 'Formulas and rollups', 'validated-field-for-acf' ) => __( 'Use formulas and rollups to calculate totals and summarize related records.', 'validated-field-for-acf' ),
+			__( 'Approvals and automation', 'validated-field-for-acf' ) => __( 'Approve status changes and send emails or signed webhooks when records change.', 'validated-field-for-acf' ),
+			__( 'Advanced table tools', 'validated-field-for-acf' ) => __( 'Save views, edit records in bulk, and run imports and background exports.', 'validated-field-for-acf' ),
 		) as $feature => $description ) {
 			echo '<div class="vf-pro-feature"><dt><strong>' . esc_html( $feature ) . '</strong></dt><dd>' . esc_html( $description ) . '</dd></div>';
 		}
 		echo '</dl><p><a class="button button-primary" href="' . esc_url( $url, array( 'http', 'https' ) ) . '" target="_blank" rel="noopener noreferrer">' . esc_html__( 'Get Validated Field Pro', 'validated-field-for-acf' ) . '<span class="screen-reader-text"> ' . esc_html__( '(opens in a new tab)', 'validated-field-for-acf' ) . '</span></a></p><h3>' . esc_html__( 'How to upgrade', 'validated-field-for-acf' ) . '</h3><ol>';
-		foreach ( array( __( 'Get your Pro license and download the Pro ZIP.', 'validated-field-for-acf' ), __( 'Install Pro alongside Free from Plugins → Add Plugin → Upload Plugin. Keep Free active.', 'validated-field-for-acf' ), __( 'Return to these settings and activate your license with your consent to receive updates.', 'validated-field-for-acf' ) ) as $step ) { echo '<li>' . esc_html( $step ) . '</li>'; }
+		foreach ( array( __( 'Get your Pro license and download the Pro ZIP.', 'validated-field-for-acf' ), __( 'Upload the Pro ZIP from Plugins → Add New → Upload Plugin and activate it alongside Free.', 'validated-field-for-acf' ), __( 'Return here, enter your license key, and consent to license and update checks.', 'validated-field-for-acf' ) ) as $step ) { echo '<li>' . esc_html( $step ) . '</li>'; }
 		echo '</ol><p>' . esc_html__( 'Your installed Pro features keep working when update access ends.', 'validated-field-for-acf' ) . '</p></section>';
 	}
 }

@@ -50,7 +50,7 @@ final class Admin {
         if (!current_user_can('read')) { return; }
         ?>
         <div id="vf-workspace" class="vf-workspace">
-            <main class="vf-main"><header class="vf-header"><div class="vf-workspace-heading"><p class="vf-kicker">Validated Field</p><h1 id="vf-title" class="screen-reader-text">Your data, organized</h1><div class="vf-heading-controls"><nav id="vf-objects" aria-label="Workspace navigation"></nav><button type="button" class="vf-button" id="vf-create-object" hidden>Create object</button></div><p id="vf-subtitle">Choose an object to manage its records.</p></div><div id="vf-header-actions"></div></header>
+            <main class="vf-main"><header class="vf-header"><div class="vf-workspace-heading"><p class="vf-kicker">Validated Field</p><h1 id="vf-title" class="screen-reader-text">Record workspace</h1><div class="vf-heading-controls"><nav id="vf-objects" aria-label="Workspace navigation"></nav><button type="button" class="vf-button" id="vf-create-object" hidden>Create object</button></div><p id="vf-subtitle">Choose an object to view its records.</p></div><div id="vf-header-actions"></div></header>
                 <div id="vf-feedback" role="status" aria-live="polite" aria-atomic="true"></div>
                 <section id="vf-content" aria-label="Records" aria-busy="true"><div class="vf-empty">Loading your workspace…</div></section>
             </main>

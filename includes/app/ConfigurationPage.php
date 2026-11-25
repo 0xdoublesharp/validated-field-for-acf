@@ -74,11 +74,11 @@ final class ConfigurationPage {
         $page = admin_url('admin.php?page=validated-field-configuration');
         ?>
         <div class="wrap vf-settings vf-transfer">
-            <header class="vf-settings-header"><div><p class="vf-settings-eyebrow">VALIDATED FIELD</p><h1>Configuration transfer</h1><p>Move your object definitions between sites, or keep a copy in version control.</p></div><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=validated-field-workspace')); ?>">Back to workspace</a></header>
+            <header class="vf-settings-header"><div><p class="vf-settings-eyebrow">VALIDATED FIELD</p><h1>Configuration transfer</h1><p>Export object definitions to version control or review a configuration from another site.</p></div><a class="button" href="<?php echo esc_url(admin_url('admin.php?page=validated-field-workspace')); ?>">Back to workspace</a></header>
             <?php if ($state['error'] !== '') { ?><div class="notice notice-error" role="alert"><p><?php echo esc_html($state['error']); ?></p></div><?php } ?>
             <?php if ($state['applied']) { ?><div class="notice notice-success" role="status"><p>Configuration applied. Your existing records have been preserved.</p></div><?php } ?>
             <div class="vf-settings-grid">
-                <section class="vf-settings-card"><h2>Export configuration</h2><p>Download object definitions, fields, validation rules and access settings as a JSON file. Record values, license credentials and webhook signing secrets are not included. Set webhook signing secrets on the destination site before importing.</p>
+                <section class="vf-settings-card"><h2>Export configuration</h2><p>Download a JSON file containing object definitions, fields, validation rules, and access settings. Use CSV export for record values. Add any new webhook signing secrets to the import file before reviewing the changes.</p>
                     <?php if ($configuration['objects']) { ?><ul class="vf-transfer-objects"><?php foreach ($configuration['objects'] as $slug=>$object) {
                         $field_count = count($object['fields'] ?? []);
                         /* translators: %s: Number of fields in the object. */
@@ -87,9 +87,9 @@ final class ConfigurationPage {
                     <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>"><input type="hidden" name="action" value="acf_vf_configuration_export"><?php wp_nonce_field('vf_configuration_export'); ?><button class="button button-primary" type="submit">Download configuration</button><?php if (Extensions::has('headless.types')) { ?> <button class="button" type="submit" name="vf_export_kind" value="client_types">Download client types</button><?php } ?></form>
                 </section>
                 <section class="vf-settings-card"><h2>Import configuration</h2>
-                    <?php if (!$pro) { ?><h3>Import with Pro</h3><p>Validated Field Pro lets you review proposed changes before applying an exported configuration. Exporting is available in Free.</p><a class="button" href="<?php echo esc_url(ACF_VF_PRO_UPGRADE_URL); ?>">Learn about Pro</a>
-                    <?php } elseif ($state['plan']) { ?><p>Your import is ready for review below. Check the changes before applying them.</p>
-                    <?php } else { ?><p>Choose an exported JSON file up to 1 MB, or paste its contents. Reviewing changes does not save them.</p>
+                    <?php if (!$pro) { ?><h3>Import with Pro</h3><p>Use Pro to preview and apply an exported configuration.</p><a class="button" href="<?php echo esc_url(ACF_VF_PRO_UPGRADE_URL); ?>">Learn about Pro</a>
+                    <?php } elseif ($state['plan']) { ?><p>Review the proposed changes below.</p>
+                    <?php } else { ?><p>Choose an exported JSON file up to 1 MB or paste its contents to preview the changes before saving.</p>
                         <form method="post" enctype="multipart/form-data" action="<?php echo esc_url($page); ?>">
                             <?php wp_nonce_field('vf_configuration_transfer','vf_transfer_nonce'); ?><input type="hidden" name="vf_transfer_action" value="review">
                             <p><label for="vf-configuration-file">Configuration file</label><input id="vf-configuration-file" type="file" name="vf_configuration_file" accept=".json,application/json"></p>
@@ -99,7 +99,7 @@ final class ConfigurationPage {
                     <?php } ?>
                 </section>
                 <?php if ($state['plan']) { $plan=$state['plan']; ?>
-                    <section class="vf-settings-card vf-transfer-review"><h2>Review changes</h2><p>Review applies to this exact configuration. Existing records remain in WordPress.</p>
+                    <section class="vf-settings-card vf-transfer-review"><h2>Review changes</h2><p>Check which object definitions this import will add, change, or remove. Applying the configuration preserves existing records.</p>
                         <div class="vf-transfer-counts"><?php foreach (['added'=>'Objects added','changed'=>'Objects changed','removed'=>'Objects removed'] as $key=>$label) { ?><div><strong><?php echo esc_html(number_format_i18n(count($plan['diff'][$key]))); ?></strong><span><?php echo esc_html($label); ?></span></div><?php } ?></div>
                         <?php foreach (['added'=>'Add','changed'=>'Change','removed'=>'Remove'] as $key=>$label) { foreach ($plan['diff'][$key] as $item) { $slug=is_array($item)?$item['object']:$item; ?><p><strong><?php echo esc_html($label); ?></strong> <code><?php echo esc_html($slug); ?></code></p><?php } } ?>
                         <?php foreach (array_merge($plan['warnings'],$plan['blocked']) as $warning) { ?><p class="vf-transfer-warning"><?php echo esc_html($warning); ?></p><?php } ?>
